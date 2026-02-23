@@ -1,0 +1,11 @@
+*.code-workspace
+*.jl.*.cov
+*.jl.cov
+*.jl.mem
+.DS_Store
+/docs/Manifest*.toml
+/docs/build/
+Manifest.toml
+docs/build/
+scratch*
+scratch/
