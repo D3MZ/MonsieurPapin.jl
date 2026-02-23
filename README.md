@@ -15,18 +15,18 @@ This ain't your ordinary digester: Search the entire internet, filter, extract, 
 ```julia
 @kwdef struct DownloadSettings
     crawlpath::String = "CC-MAIN-2025-01"
-    ram::Float16 = 0.8
+    ram::Float32 = 0.8
 end
 
 @kwdef struct EmbeddingSettings
     context::Int = 2048
-    distance::Float16 = 0.65
+    distance::Float32 = 0.65
     batchsize::Int = 8
 end
 
 @kwdef struct LLMSettings
     prompt::String
-    gpumemory::Float16 = 0.8
+    gpumemory::Float32 = 0.8
     batchsize::Int = 8
 end
 
@@ -45,9 +45,9 @@ struct WARC
     content::String
 end
 ```
-
+- [ ] Progress bar based on urls completed
 - [ ] Download Stage
-  - [ ] Get latest Common Crawl monthly WET snapshot and determine the number of urls.
+  - [ ] Get Common Crawl monthly WET snapshot via `crawlpath` and determine the number of urls.
   - [ ] Put `.warc.wet.gz` file URLs into `weturls::Channel{String}`
   - [ ] Stream-download WET files into `wetstreams::Channel{IO}` sized from `DownloadSettings.ram` at init.
   - [ ] Stream-decompress gzip
@@ -66,5 +66,3 @@ end
   - [ ] Take from `filteredwarcs` channel and pack into `llmbatches::Channel{Vector{WARC}}` sized from `LLMSettings.gpumemory` at init.
   - [ ] Batch pages for GPU inference up to memory limits using `LLMSettings.batchsize`.
   - [ ] Have LLM append to markdown file.
-
-- [ ] Progress bar based on urls filtered
