@@ -2,5 +2,5 @@ using MonsieurPapin
 using Test
 
 @testset "MonsieurPapin.jl" begin
-    # Write your tests here.
+    include("download_stage_tests.jl")
 end

@@ -45,15 +45,15 @@ struct WARC
     content::String
 end
 ```
-- [ ] Progress bar based on urls completed
-- [ ] Download Stage
-  - [ ] Get Common Crawl monthly WET snapshot via `crawlpath` and determine the number of urls.
-  - [ ] Put `.warc.wet.gz` file URLs into `weturls::Channel{String}`
-  - [ ] Stream-download WET files into `wetstreams::Channel{IO}` sized from `DownloadSettings.ram` at init.
-  - [ ] Stream-decompress gzip
-  - [ ] Stream WARC records efficiently into a Julia `warcs::Channel{WARC}` sized to 2x embedding batch.
-    - [ ] Use Content-Length from header to efficiently read plaintext content.
-    - [ ] Parse WARC into `WARC` types, have the types go into the `warcs` channel
+- [x] Progress bar based on urls completed
+- [x] Download Stage
+  - [x] Get Common Crawl monthly WET snapshot via `crawlpath` and determine the number of urls.
+  - [x] Put `.warc.wet.gz` file URLs into `weturls::Channel{String}`
+  - [x] Stream-download WET files into `wetstreams::Channel{IO}` sized from `DownloadSettings.ram` at init.
+  - [x] Stream-decompress gzip
+  - [x] Stream WARC records efficiently into a Julia `warcs::Channel{WARC}` sized to 2x embedding batch.
+    - [x] Use Content-Length from header to efficiently read plaintext content.
+    - [x] Parse WARC into `WARC` types, have the types go into the `warcs` channel
 
 - [ ] Embedding Stage (CPU) for coarse semantic filtering
   - [ ] Take from the `warcs` channel and filter using GemmaEmbeddings model on CPU
