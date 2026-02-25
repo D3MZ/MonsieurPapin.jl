@@ -1,4 +1,0 @@
-crawl-data/CC-MAIN-TEST-01/segments/0000/wet/CC-MAIN-0000-0000.warc.wet.gz
-https://data.commoncrawl.org/crawl-data/CC-MAIN-TEST-01/segments/0000/wet/CC-MAIN-0000-0001.warc.wet.gz
-
- crawl-data/CC-MAIN-TEST-01/segments/0000/wet/CC-MAIN-0000-0002.warc.wet.gz 

@@ -20,17 +20,18 @@ A gigabit connection places our lowerbound of reading the internet to about a da
 - 6 TB of compressed is 17 TB uncompressed at 2.8249x compression ratio
   - 30 file sample
 - 21 hours - 25 hrs to download compressed WET
- - 30s, 1 thread: 68.63 MiB/s
- - 30s, 4 threads: 81.82 MiB/s
+  - 30s, 1 thread: 68.63 MiB/s
+  - 30s, 4 threads: 81.82 MiB/s
 - 24,015 pages/s
   - 1 thread download and read
   - 24,015 pages/s * 25 * 3600 s = 2,161,350,000 pages == [2.1B pages February 2026 Crawl post total](https://commoncrawl.org/blog/february-2026-crawl-archive-now-available).
 - 7,695.81 chars/page & 3,828.90 tokens/page.
- - 3,000 record sample
+  - 3,000 record sample
+- fastText? 
 - 13,000 tokens/s 200MB RAM usage through multi-language embedding model
- - EmbeddingGemma, M1 Max GPU, GGUF Q4 quantization
+  - EmbeddingGemma, M1 Max GPU, GGUF Q4 quantization
 - CHECK: 8,640 pages/day ~ 0.1 pages/s via LLM assuming 4K tokens input and 250 tokens output.
- - 50 Token/s LLM
+  - 50 Token/s LLM
 
 ### EmbeddingGemma Performance Matrix
 _Source: `benchmarks/embeddinggemma_matrix_doe.csv`, LM Studio `lms.Client` runs, and REST runs from `scripts/benchmark_lmstudio_rest_python.py` + `scripts/benchmark_lmstudio_rest_julia.jl` on `text-embedding-embeddinggemma-300m-qat` (Q4 GGUF) and `text-embedding-embeddinggemma-300m` (F32 GGUF), duration 20s per batch. REST `Tok/s` uses `Req/s * Seq Len` proxy because API embedding usage tokens are reported as `0`._
@@ -132,12 +133,12 @@ end
     - [x] Use Content-Length from header to efficiently read plaintext content.
     - [x] Parse WARC into `WARC` types, have the types go into the `warcs` channel
 
-- [x] Embedding Stage (CPU) for coarse semantic filtering
-  - [x] Take from the `warcs` channel and filter using GemmaEmbeddings model on CPU
-    - [x] normalize the content 
-    - [x] Tokenize up to `EmbeddingSettings.context` length of tokens
-    - [x] Embed on CPU
-    - [x] If cosine similarity is within `EmbeddingSettings.distance` then put into `filteredwarcs::Channel{WARC}` sized to `2 * LLMSettings.batchsize`.
+- [ ] Embedding Stage (CPU) for coarse semantic filtering
+  - [ ] Take from the `warcs` channel and filter using GemmaEmbeddings model on CPU
+    - [ ] normalize the content 
+    - [ ] Tokenize up to `EmbeddingSettings.context` length of tokens
+    - [ ] Embed on CPU
+    - [ ] If cosine similarity is within `EmbeddingSettings.distance` then put into `filteredwarcs::Channel{WARC}` sized to `2 * LLMSettings.batchsize`.
 
 - [ ] LLM Stage (GPU) for summarizing
   - [ ] Take from `filteredwarcs` channel and pack into `llmbatches::Channel{Vector{WARC}}` sized from `LLMSettings.gpumemory` at init.
