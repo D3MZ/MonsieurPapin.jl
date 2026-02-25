@@ -5,24 +5,32 @@
 [![Build Status](https://github.com/D3MZ/MonsieurPapin.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/D3MZ/MonsieurPapin.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![Coverage](https://codecov.io/gh/D3MZ/MonsieurPapin.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/D3MZ/MonsieurPapin.jl)
 
-You found us! Thank the spellcheck and/or hyperlinking gods.
-
 > A French Huguenot physicist, mathematician and inventor, best known for his pioneering invention of the steam digester, the forerunner of the pressure cooker, the steam engine, the centrifugal pump, and a submersible boat. - [Wikipedia](https://en.wikipedia.org/wiki/Denis_Papin)
 
-This ain't your ordinary digester: Search the entire internet, filter, extract, reduce, and summarize into a "research grade" markdown file on your computer in a matter of weeks... Hopefully! 
+This ain't your ordinary digester: Search the entire internet summarize into a "research grade" markdown file entirely on your computer in a day or your money back!
+
+## Features
+- [ ] Query in 1 language, sources and information in all languages.
+- [ ] Diverse: Near Duplicate ideas are aggregated
 
 ## Theory and Research
+A gigabit connection places our lowerbound of reading the internet to about a day. In this time an LLM can process ~10K pages. Leaving the work to find the best 10K pages to be found out of the 2.1 Billion given a generic query. 
+
 - [February 2026 crawl](https://commoncrawl.org/blog/february-2026-crawl-archive-now-available) is 2.1 billion web pages and 5.96 TiB of compressed WET files (~human readable text).
-- 30 file sample: 6 TB of compressed is 17 TB uncompressed ~= 2.8249x compression ratio
-- Gigabit connection 1 thread (30s): 68.63 MiB/s, 25.3 hrs, 193.9 MiB/s uncompressed ; 4 threads (30s): 81.82 MiB/s, 21.2 hours, 231.1 MiB/s uncompressed.
-- 1 thread: 24,015 pages/s
-  - Consistent with 2.1B page estimate: 24,015 pages/s * 25 * 3600 s = 2,161,350,000 pages
-- 3,000 record sample:
-  - Avg raw chars/page: 7,695.81
-  - Avg normalized chars/page: 7,696.39
-  - Avg raw tokens/page: 3,828.90
-  - Avg normalized tokens/page: 3,705.14
-- Can I use an multi-language embedding model to coarsely filter 24K pages / second?
+- 6 TB of compressed is 17 TB uncompressed at 2.8249x compression ratio
+  - 30 file sample
+- 21 hours - 25 hrs to download compressed WET
+ - 30s, 1 thread: 68.63 MiB/s
+ - 30s, 4 threads: 81.82 MiB/s
+- 24,015 pages/s
+  - 1 thread download and read
+  - 24,015 pages/s * 25 * 3600 s = 2,161,350,000 pages == [2.1B pages February 2026 Crawl post total](https://commoncrawl.org/blog/february-2026-crawl-archive-now-available).
+- 7,695.81 chars/page & 3,828.90 tokens/page.
+ - 3,000 record sample
+- 13,000 tokens/s 200MB RAM usage through multi-language embedding model
+ - EmbeddingGemma, M1 Max GPU, GGUF Q4 quantization
+- CHECK: 8,640 pages/day ~ 0.1 pages/s via LLM assuming 4K tokens input and 250 tokens output.
+ - 50 Token/s LLM
 
 ### EmbeddingGemma Performance Matrix
 _Source: `benchmarks/embeddinggemma_matrix_doe.csv`, LM Studio `lms.Client` runs, and REST runs from `scripts/benchmark_lmstudio_rest_python.py` + `scripts/benchmark_lmstudio_rest_julia.jl` on `text-embedding-embeddinggemma-300m-qat` (Q4 GGUF) and `text-embedding-embeddinggemma-300m` (F32 GGUF), duration 20s per batch. REST `Tok/s` uses `Req/s * Seq Len` proxy because API embedding usage tokens are reported as `0`._
