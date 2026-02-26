@@ -12,7 +12,7 @@ remaining(started, limit) = limit - (time() - started)
 
 function budget!(meter, started, limit, halted)
     halted[] && return false
-    update!(meter, remaining(started, limit); increment = false)
+    ProgressMeter.update!(meter, remaining(started, limit); increment = false)
     if meter.triggered
         halted[] = true
         return false
@@ -226,20 +226,23 @@ function score(page, word, counts, targets)
 end
 
 function produce!(pageschannel, crawlpath, crawlroot, meter, started, limit, halted, pool, window, pages, files)
-    pagebatch = NamedTuple{(:page, :bytes, :count, :file), Tuple{Int, Vector{UInt8}, Int, Int}}[]
-    batchsize = 64
-    feed(PathFeed(), crawlpath, meter, started, limit, halted) do path
-        files[] += 1
-        feed(PageFeed(), crawlroot * path, meter, started, limit, halted, pool, window, pages, files) do page
-            push!(pagebatch, page)
-            if length(pagebatch) >= batchsize
-                put!(pageschannel, pagebatch)
-                pagebatch = NamedTuple{(:page, :bytes, :count, :file), Tuple{Int, Vector{UInt8}, Int, Int}}[]
+    try
+        pagebatch = NamedTuple{(:page, :bytes, :count, :file), Tuple{Int, Vector{UInt8}, Int, Int}}[]
+        batchsize = 64
+        feed(PathFeed(), crawlpath, meter, started, limit, halted) do path
+            files[] += 1
+            feed(PageFeed(), crawlroot * path, meter, started, limit, halted, pool, window, pages, files) do page
+                push!(pagebatch, page)
+                if length(pagebatch) >= batchsize
+                    put!(pageschannel, pagebatch)
+                    pagebatch = NamedTuple{(:page, :bytes, :count, :file), Tuple{Int, Vector{UInt8}, Int, Int}}[]
+                end
             end
         end
+        isempty(pagebatch) || put!(pageschannel, pagebatch)
+    finally
+        isopen(pageschannel) && close(pageschannel)
     end
-    isempty(pagebatch) || put!(pageschannel, pagebatch)
-    close(pageschannel)
 end
 
 function score!(scoreschannel, pageschannel, pool, targets)
@@ -295,10 +298,13 @@ function crawl(crawlpath, crawlroot, previewseconds)
     producer = Threads.@spawn produce!(pageschannel, crawlpath, crawlroot, budgetmeter, started, previewseconds, halted, pool, window, pages, files)
     scorers = [Threads.@spawn score!(scoreschannel, pageschannel, pool, targets) for _ in Base.OneTo(scorerworkers)]
     closer = Threads.@spawn begin
-        for task in scorers
-            wait(task)
+        try
+            for task in scorers
+                wait(task)
+            end
+        finally
+            isopen(scoreschannel) && close(scoreschannel)
         end
-        close(scoreschannel)
     end
 
     processed = 0
