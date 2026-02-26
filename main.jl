@@ -1,9 +1,10 @@
-using HTTP, CodecZlib, Dates, Logging, BufferedStreams, DataStructures
+using HTTP, CodecZlib, ProgressMeter, Dates, Logging, BufferedStreams, DataStructures
 
 crawlpath = "https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-08/wet.paths.gz"
 crawlroot = "https://data.commoncrawl.org/"
 previewseconds = 8.0
 query = "trading strategies"
+openaicompatiblepath = "openai-compatible.json"
 
 struct PathFeed end
 struct PageFeed end
@@ -12,7 +13,8 @@ remaining(started, limit) = limit - (time() - started)
 
 function budget!(meter, started, limit, halted)
     halted[] && return false
-    if time() - started >= limit
+    ProgressMeter.update!(meter, remaining(started, limit); increment = false)
+    if meter.triggered
         halted[] = true
         return false
     end
@@ -221,7 +223,12 @@ function score(page, word, counts, targets)
     fill!(counts, 0)
     size = tokenize!(word, 0, counts, targets, page.bytes, page.count)
     word!(word, size, counts, targets)
-    (page = page.page, file = page.file, score = distance(counts), bytes = page.bytes)
+    sample = Vector{UInt8}(undef, min(page.count, 512))
+    for index in eachindex(sample)
+        byte = page.bytes[index]
+        sample[index] = (UInt8(' ') <= byte <= UInt8('~')) ? byte : UInt8(' ')
+    end
+    (page = page.page, file = page.file, score = distance(counts), snippet = String(sample), bytes = page.bytes)
 end
 
 function produce!(pageschannel, crawlpath, crawlroot, meter, started, limit, halted, pool, window, pages, files)
@@ -248,36 +255,106 @@ function score!(scoreschannel, pageschannel, pool, targets)
     word = Vector{UInt8}(undef, 64)
     counts = zeros(Int, 2)
     for batch in pageschannel
-        scored = NamedTuple{(:page, :file, :score), Tuple{Int, Int, Float64}}[]
+        scored = NamedTuple{(:page, :file, :score, :snippet), Tuple{Int, Int, Float64, String}}[]
         sizehint!(scored, length(batch))
         for page in batch
             result = score(page, word, counts, targets)
-            push!(scored, (page = result.page, file = result.file, score = result.score))
+            push!(scored, (page = result.page, file = result.file, score = result.score, snippet = result.snippet))
             put!(pool, result.bytes)
         end
         put!(scoreschannel, scored)
     end
 end
 
-function queue!(frontier, score, page, file, limit)
+function queue!(frontier, score, page, file, snippet, limit)
     if length(frontier) < limit
-        push!(frontier, (score, page, file))
+        push!(frontier, (score, page, file, snippet))
         return nothing
     end
     score < first(maximum(frontier)) || return nothing
     popmax!(frontier)
-    push!(frontier, (score, page, file))
+    push!(frontier, (score, page, file, snippet))
     nothing
+end
+
+function setting(text, name, fallback::String)
+    matchvalue = match(Regex("\"$(name)\"\\s*:\\s*\"([^\"]*)\""), text)
+    isnothing(matchvalue) ? fallback : first(matchvalue.captures)
+end
+
+function setting(text, name, fallback::Int)
+    matchvalue = match(Regex("\"$(name)\"\\s*:\\s*([0-9]+)"), text)
+    isnothing(matchvalue) ? fallback : parse(Int, first(matchvalue.captures))
+end
+
+function configured(path)
+    text = read(path, String)
+    (baseurl = setting(text, "base_url", "http://localhost:1234"),
+     path = setting(text, "path", "/api/v1/chat"),
+     model = setting(text, "model", "qwen/qwen3.5-35b-a3b"),
+     password = setting(text, "password", ""),
+     systemprompt = setting(text, "system_prompt", ""),
+     input = setting(text, "input", ""),
+     outputpath = setting(text, "output_path", "research.md"),
+     maxpages = setting(text, "max_pages", 1),
+     timeoutseconds = setting(text, "timeout_seconds", 120))
+end
+
+function escaped(text)
+    replace(text, "\\" => "\\\\", "\"" => "\\\"", "\n" => "\\n", "\r" => "\\r", "\t" => "\\t")
+end
+
+function unescaped(text)
+    replace(text, "\\n" => "\n", "\\r" => "\r", "\\t" => "\t", "\\\"" => "\"", "\\\\" => "\\")
+end
+
+function endpoint(settings)
+    startswith(settings.path, "/") ? settings.baseurl * settings.path : settings.baseurl * "/" * settings.path
+end
+
+function payload(settings, score, page, file, snippet)
+    input = settings.input * "\n\npage=$(page) file=$(file) score=$(score)\n" * snippet
+    "{\"model\":\"$(escaped(settings.model))\",\"system_prompt\":\"$(escaped(settings.systemprompt))\",\"input\":\"$(escaped(input))\"}"
+end
+
+function content(body)
+    response = String(body)
+    for pattern in (r"\"content\"\s*:\s*\"((?:\\.|[^\"])*)\"", r"\"output\"\s*:\s*\"((?:\\.|[^\"])*)\"", r"\"text\"\s*:\s*\"((?:\\.|[^\"])*)\"")
+        matchvalue = match(pattern, response)
+        isnothing(matchvalue) || return strip(unescaped(first(matchvalue.captures)))
+    end
+    ""
+end
+
+function headers(settings)
+    settings.password == "" ? ["Content-Type" => "application/json"] : ["Content-Type" => "application/json", "Authorization" => "Bearer $(settings.password)"]
+end
+
+function write!(frontier, settings)
+    entries = 0
+    open(settings.outputpath, "a") do report
+        while !isempty(frontier) && entries < settings.maxpages
+            item = popmin!(frontier)
+            response = HTTP.post(endpoint(settings); headers = headers(settings), body = payload(settings, item[1], item[2], item[3], item[4]), readtimeout = settings.timeoutseconds)
+            text = content(response.body)
+            isempty(text) && continue
+            write(report, "\n\n## page=$(item[2]) file=$(item[3]) score=$(item[1])\n\n")
+            write(report, text)
+            entries += 1
+        end
+    end
+    entries
 end
 
 function crawl(crawlpath, crawlroot, previewseconds)
     started = time()
-    budgetmeter = nothing
+    budgetmeter = ProgressThresh(0.0; output = devnull)
+    progress = ProgressUnknown(; desc = "crawl", showspeed = true, output = stdout, enabled = true, dt = 0.2)
     targets = (collect(codeunits("trading")), collect(codeunits("strategies")))
     window = 512
     poolsize = 128
     pageschannel = Channel{Vector{NamedTuple{(:page, :bytes, :count, :file), Tuple{Int, Vector{UInt8}, Int, Int}}}}(poolsize)
-    scoreschannel = Channel{Vector{NamedTuple{(:page, :file, :score), Tuple{Int, Int, Float64}}}}(poolsize)
+    scoreschannel = Channel{Vector{NamedTuple{(:page, :file, :score, :snippet), Tuple{Int, Int, Float64, String}}}}(poolsize)
     pool = Channel{Vector{UInt8}}(poolsize)
     for _ in Base.OneTo(poolsize)
         put!(pool, Vector{UInt8}(undef, window))
@@ -286,8 +363,10 @@ function crawl(crawlpath, crawlroot, previewseconds)
     files = Ref(0)
     pages = Ref(0)
     halted = Ref(false)
+    pending = 0
+    batch = 1024
     distance_total = 0.0
-    frontier = BinaryMinMaxHeap{Tuple{Float64, Int, Int}}()
+    frontier = BinaryMinMaxHeap{Tuple{Float64, Int, Int, String}}()
     frontierlimit = 10_000
     scorerworkers = 1
 
@@ -308,14 +387,23 @@ function crawl(crawlpath, crawlroot, previewseconds)
         for result in batchresult
             processed += 1
             distance_total += result.score
-            queue!(frontier, result.score, result.page, result.file, frontierlimit)
+            queue!(frontier, result.score, result.page, result.file, result.snippet, frontierlimit)
+            pending += 1
+            if pending >= batch
+                next!(progress; step = pending)
+                pending = 0
+            end
         end
     end
 
     wait(producer)
     wait(closer)
-    @info "crawl summary" query files = files[] pages = processed average_distance = (processed > 0 ? distance_total / processed : 0.0) queue_pages = length(frontier) best_distance = (isempty(frontier) ? 0.0 : first(minimum(frontier))) cutoff_distance = (isempty(frontier) ? 0.0 : first(maximum(frontier))) elapsed = canonicalize(Second(round(Int, time() - started)))
-    (files = files[], pages = processed, averagedistance = (processed > 0 ? distance_total / processed : 0.0), queuepages = length(frontier), bestdistance = (isempty(frontier) ? 0.0 : first(minimum(frontier))), cutoffdistance = (isempty(frontier) ? 0.0 : first(maximum(frontier))), queue = frontier)
+    pending > 0 && next!(progress; step = pending)
+    finish!(progress)
+    settings = configured(openaicompatiblepath)
+    written = write!(frontier, settings)
+    @info "crawl summary" query files = files[] pages = processed average_distance = (processed > 0 ? distance_total / processed : 0.0) queue_pages = length(frontier) best_distance = (isempty(frontier) ? 0.0 : first(minimum(frontier))) cutoff_distance = (isempty(frontier) ? 0.0 : first(maximum(frontier))) llm_entries = written output_path = settings.outputpath elapsed = canonicalize(Second(round(Int, time() - started)))
+    (files = files[], pages = processed, averagedistance = (processed > 0 ? distance_total / processed : 0.0), queuepages = length(frontier), bestdistance = (isempty(frontier) ? 0.0 : first(minimum(frontier))), cutoffdistance = (isempty(frontier) ? 0.0 : first(maximum(frontier))), llmentries = written, queue = frontier)
 end
 
 crawl(crawlpath, crawlroot, previewseconds)

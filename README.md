@@ -7,14 +7,103 @@
 
 > A French Huguenot physicist, mathematician and inventor, best known for his pioneering invention of the steam digester, the forerunner of the pressure cooker, the steam engine, the centrifugal pump, and a submersible boat. - [Wikipedia](https://en.wikipedia.org/wiki/Denis_Papin)
 
-This ain't your ordinary digester: Search the entire internet summarize into a "research grade" markdown file entirely on your computer in a day or your money back!
+Not your ordinary digester: Search the entire internet summarize into a "research grade" markdown file entirely on your computer in a day or your money back!
+
+## TODO
+Ensure performance maintains +20K pages/sec
+- [x] Streaming and decompress
+- [x] Muse fast text on pages. Score distance. initial comparison: "trading strategies"
+- [x] Insert into Priority Min Max Queue that's no more than 10K elements large.
+- [x] Generate an openai-compatible.json config for local endpoint/model/output path with optional password field.
+- [x] Have LLM pop from queue and if relevant, append write into a research markdown doc based on prompt: "If a trading strategy exists then write a small description about it and the trading strategy as pseudo code wrapped in a code fence, otherwise do not output anything". 
+
+
+
+Scoring fitness can be based on:
+1. Relevance
+2. similarity to historical 
+3. Entropy 
+4. Age 
+5. Etc. 
+
+
+## IGNORE BELOW WIP
+
+- [ ] Progress bar
+- [ ] stream `CC-MAIN-2026-08` and decompress
+- [ ] 
+- [ ] Download Stage
+  - [ ] Get Common Crawl monthly WET snapshot via `crawlpath` and determine the number of urls.
+  - [ ] Put `.warc.wet.gz` file URLs into `weturls::Channel{String}`
+  - [ ] Stream-download WET files into `wetstreams::Channel{IO}` sized from `DownloadSettings.ram` at init.
+  - [ ] Stream-decompress gzip
+  - [ ] Stream WARC records efficiently into a Julia `warcs::Channel{WARC}` sized to 2x embedding batch.
+    - [ ] Use Content-Length from header to efficiently read plaintext content.
+    - [ ] Parse WARC into `WARC` types, have the types go into the `warcs` channel
+
+- [ ] Embedding Stage (CPU) for coarse semantic filtering
+  - [ ] Take from the `warcs` channel and filter using GemmaEmbeddings model on CPU
+    - [ ] normalize the content 
+    - [ ] Tokenize up to `EmbeddingSettings.context` length of tokens
+    - [ ] Embed on CPU
+    - [ ] If cosine similarity is within `EmbeddingSettings.distance` then put into `filteredwarcs::Channel{WARC}` sized to `2 * LLMSettings.batchsize`.
+
+- [ ] LLM Stage (GPU) for summarizing
+  - [ ] Take from `filteredwarcs` channel and pack into `llmbatches::Channel{Vector{WARC}}` sized from `LLMSettings.gpumemory` at init.
+  - [ ] Batch pages for GPU inference up to memory limits using `LLMSettings.batchsize`.
+  - [ ] Have LLM append to markdown file.
+
+
 
 ## Features
 - [ ] Query in 1 language, sources and information in all languages.
 - [ ] Diverse: Near Duplicate ideas are aggregated
 
 ## Theory and Research
-A gigabit connection places our lowerbound of reading the internet to about a day. In this time an LLM can process ~10K pages. Leaving the work to find the best 10K pages to be found out of the 2.1 Billion given a generic query. 
+A gigabit connection places our lowerbound of reading the internet to about a day. 
+24hrs gives a Local LLM has enough time to process ~10K pages. 
+
+This creates a few challenges:
+1. How to filter effectively given a generic search phrase?
+2. How to find the best 10K pages out of the 2.1 Billion? 
+3. How to do it without taking too many resources from the GPU?
+4. How to ensure maximum diversity and relevance?
+
+Rough ideas:
+1. [Max-min fairness](https://en.wikipedia.org/wiki/Max-min_fairness) is said to be achieved by an allocation if and only if the allocation is feasible and an attempt to increase the allocation of any participant necessarily results in the decrease in the allocation of some other participant with an equal or smaller allocation.
+2. [Min-max heap queues](https://en.wikipedia.org/wiki/Priority_queue)
+
+
+### Streaming Budget @ 68.63 MiB/s Compressed (≈ 203 MB/s Plaintext, ≈ 24,015 pages/s)
+
+_Assumes Apple M1 Max performance core (~3.2 GHz, ~1.2 INT ops/cycle sustained for branchy, memory-bound workloads ⇒ ~3.8×10^9 INT ops/sec/core) for CPU core equivalence estimates._
+
+```
+| Step                      | Operation                | Compute / s          | CPU (cores) | Mem BW / s     | Notes               |
+|---------------------------|--------------------------|----------------------|-------------|----------------|---------------------|
+| Download                  | Network I/O              | —                    | —           | 68.63 MiB/s in | Baseline ingest     |
+| Decompress (gzip)         | Inflate plaintext        | ~8.1×10⁸ cycles/s    | ~0.6        | ~203 MB/s out  | 3–5 cycles/byte     |
+| WARC Header Parse         | Record framing           | ~5–10×10⁷ cycles/s   | ~0.3–0.6    | negligible     | ~100–200 ns/record  |
+| Normalize Text            | Lower / strip punct      | ~9.25×10⁸ int ops/s  | ~0.4        | stream-bound   | ~5 ops/char         |
+| Shingle Tokenization (k5) | Rolling hash             | ~9.25×10⁸ int ops/s  | ~0.4        | stream-bound   | ~5 ops/char         |
+| SimHash Build (64-bit)    | Accumulator updates      | ~1.18×10¹⁰ int adds  | ~5.5        | ~6 MB/s writes | 64 updates/shingle  |
+| Sliding Dedupe (W=512)    | XOR + POPCNT             | ~6.1×10⁷ cycles/s    | ~0.05       | ~197 MB/s read | 12.3 M comps/s      |
+| **Pipeline Total**        | —                        | ~1.4×10¹⁰ int ops/s  | **~7–8**    | **400–600 MB/s** | Inline w/ download |
+```
+
+### Sliding Window Size vs Headroom
+
+```
+| Window (W) | Comparisons / s | CPU (cores) | Mem BW / s |
+|------------|------------------|-------------|------------|
+| 10^3       | ~24.0 M          | ~0.10       | ~384 MB/s  |
+| 10^4       | ~240 M           | ~1.0        | ~3.84 GB/s |
+| 10^5       | ~2.4 B           | ~10.0       | ~38.4 GB/s |
+| 10^6       | ~24.0 B          | ~100        | ~384 GB/s  |
+| 10^7       | ~240 B           | ~1000       | ~3.84 TB/s |
+```
+
+
 
 - [February 2026 crawl](https://commoncrawl.org/blog/february-2026-crawl-archive-now-available) is 2.1 billion web pages and 5.96 TiB of compressed WET files (~human readable text).
 - 6 TB of compressed is 17 TB uncompressed at 2.8249x compression ratio
@@ -73,6 +162,7 @@ _Source: `benchmarks/embeddinggemma_matrix_doe.csv`, LM Studio `lms.Client` runs
 | lmstudio-q4             | metal      |             1024 |     4 | 11.963 | 12,250.3 |       20.06 |
 | lmstudio-q4             | metal      |              512 |     1 | 21.870 | 11,197.3 |       20.03 |
 | lmstudio-q4             | metal      |              512 |     4 | 21.434 | 10,974.0 |       20.16 |
+| lmstudio-q4             | metal      |              512 |    16 |  5.675 |  2,905.8 |       31.01 |
 | lmstudio-f32            | metal      |             2048 |     1 |  6.397 | 13,101.5 |       20.01 |
 | lmstudio-f32            | metal      |             2048 |     2 |  6.356 | 13,017.4 |       20.14 |
 | lmstudio-f32            | metal      |             2048 |     4 |  6.308 | 12,917.8 |       20.29 |
@@ -88,74 +178,3 @@ _Source: `benchmarks/embeddinggemma_matrix_doe.csv`, LM Studio `lms.Client` runs
 | lmstudio-q4-rest-julia  | metal(api) |             2048 |     4 |  6.466 | 13,241.4 |       20.42 |
 | lmstudio-q4-rest-julia  | metal(api) |             2048 |     8 |  6.518 | 13,349.1 |       20.86 |
 | lmstudio-q4-rest-julia  | metal(api) |              512 |     8 | 23.937 | 12,255.8 |       20.05 |
-
-## TODO
-```julia
-@kwdef struct DownloadSettings
-    crawlpath::String = "CC-MAIN-2025-01"
-    ram::Float32 = 0.8
-end
-
-@kwdef struct EmbeddingSettings
-    context::Int = 2048
-    distance::Float32 = 0.65
-    batchsize::Int = 8
-end
-
-@kwdef struct LLMSettings
-    prompt::String
-    gpumemory::Float32 = 0.8
-    batchsize::Int = 8
-end
-
-@kwdef struct Settings
-    query::String
-    download::DownloadSettings = DownloadSettings()
-    embedding::EmbeddingSettings = EmbeddingSettings()
-    llm::LLMSettings
-end
-
-struct WARC
-    uri::String
-    date::DateTime
-    language::String
-    length::Int
-    content::String
-end
-```
-- [x] Progress bar based on urls completed
-- [x] Download Stage
-  - [x] Get Common Crawl monthly WET snapshot via `crawlpath` and determine the number of urls.
-  - [x] Put `.warc.wet.gz` file URLs into `weturls::Channel{String}`
-  - [x] Stream-download WET files into `wetstreams::Channel{IO}` sized from `DownloadSettings.ram` at init.
-  - [x] Stream-decompress gzip
-  - [x] Stream WARC records efficiently into a Julia `warcs::Channel{WARC}` sized to 2x embedding batch.
-    - [x] Use Content-Length from header to efficiently read plaintext content.
-    - [x] Parse WARC into `WARC` types, have the types go into the `warcs` channel
-
-- [ ] Embedding Stage (CPU) for coarse semantic filtering
-  - [ ] Take from the `warcs` channel and filter using GemmaEmbeddings model on CPU
-    - [ ] normalize the content 
-    - [ ] Tokenize up to `EmbeddingSettings.context` length of tokens
-    - [ ] Embed on CPU
-    - [ ] If cosine similarity is within `EmbeddingSettings.distance` then put into `filteredwarcs::Channel{WARC}` sized to `2 * LLMSettings.batchsize`.
-
-- [ ] LLM Stage (GPU) for summarizing
-  - [ ] Take from `filteredwarcs` channel and pack into `llmbatches::Channel{Vector{WARC}}` sized from `LLMSettings.gpumemory` at init.
-  - [ ] Batch pages for GPU inference up to memory limits using `LLMSettings.batchsize`.
-  - [ ] Have LLM append to markdown file.
-
-## Embedding Runtime Setup (uv + PythonCall)
-
-```bash
-uv venv .venv
-uv pip install sentence-transformers torch
-export JULIA_CONDAPKG_BACKEND=Null
-export JULIA_PYTHONCALL_EXE=$(pwd)/.venv/bin/python
-```
-
-Optional integration test:
-
-```bash
-MONSIEURPAPIN_EMBEDDING_INTEGRATION=1 julia --project -e 'using Pkg; Pkg.test()'
-```
