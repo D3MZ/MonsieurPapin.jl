@@ -1,4 +1,4 @@
-using HTTP, CodecZlib, ProgressMeter, Dates, Logging, BufferedStreams
+using HTTP, CodecZlib, ProgressMeter, Dates, Logging, BufferedStreams, DataStructures
 
 crawlpath = "https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-08/wet.paths.gz"
 crawlroot = "https://data.commoncrawl.org/"
@@ -257,6 +257,17 @@ function score!(scoreschannel, pageschannel, pool, targets)
     end
 end
 
+function queue!(frontier, score, page, file, limit)
+    if length(frontier) < limit
+        push!(frontier, (score, page, file))
+        return nothing
+    end
+    score < first(maximum(frontier)) || return nothing
+    popmax!(frontier)
+    push!(frontier, (score, page, file))
+    nothing
+end
+
 function crawl(crawlpath, crawlroot, previewseconds)
     started = time()
     budgetmeter = ProgressThresh(0.0; output = devnull)
@@ -277,6 +288,8 @@ function crawl(crawlpath, crawlroot, previewseconds)
     pending = 0
     batch = 1024
     distance_total = 0.0
+    frontier = BinaryMinMaxHeap{Tuple{Float64, Int, Int}}()
+    frontierlimit = 10_000
     scorerworkers = 1
 
     producer = Threads.@spawn produce!(pageschannel, crawlpath, crawlroot, budgetmeter, started, previewseconds, halted, pool, window, pages, files)
@@ -293,6 +306,7 @@ function crawl(crawlpath, crawlroot, previewseconds)
         for result in batchresult
             processed += 1
             distance_total += result.score
+            queue!(frontier, result.score, result.page, result.file, frontierlimit)
             pending += 1
             if pending >= batch
                 next!(progress; step = pending)
@@ -305,8 +319,8 @@ function crawl(crawlpath, crawlroot, previewseconds)
     wait(closer)
     pending > 0 && next!(progress; step = pending)
     finish!(progress)
-    @info "crawl summary" query files = files[] pages = processed average_distance = (processed > 0 ? distance_total / processed : 0.0) elapsed = canonicalize(Second(round(Int, time() - started)))
-    (files = files[], pages = processed, averagedistance = (processed > 0 ? distance_total / processed : 0.0))
+    @info "crawl summary" query files = files[] pages = processed average_distance = (processed > 0 ? distance_total / processed : 0.0) queue_pages = length(frontier) best_distance = (isempty(frontier) ? 0.0 : first(minimum(frontier))) cutoff_distance = (isempty(frontier) ? 0.0 : first(maximum(frontier))) elapsed = canonicalize(Second(round(Int, time() - started)))
+    (files = files[], pages = processed, averagedistance = (processed > 0 ? distance_total / processed : 0.0), queuepages = length(frontier), bestdistance = (isempty(frontier) ? 0.0 : first(minimum(frontier))), cutoffdistance = (isempty(frontier) ? 0.0 : first(maximum(frontier))), queue = frontier)
 end
 
 crawl(crawlpath, crawlroot, previewseconds)
