@@ -4,23 +4,25 @@
 # Performance differences on per-put and per-take for isbits and nonisbits types?
 
 # Results
-# For the current buffered primitive benchmark, thread count, occupancy, and payload type
-# had no meaningful effect.
-# Unbuffered Channel(0) is ~500x slower than the buffered ~40 ns cases because
-# every successful transfer requires both sides to complete each rendezvous, including handoff /
-# wakeup / scheduling costs.
-# Buffered isbits put!: ~42 ns
-# Buffered isbits take!: ~41 ns
-# Buffered nonisbits put!: ~42 ns
-# Buffered nonisbits take!: ~41 ns
-# Buffered payload put!: ~42 ns
-# Buffered payload take!: ~41 ns
-# Channel(0) rendezvous from put! side, isbits: ~15.792 us
-# Channel(0) rendezvous from take! side, isbits: ~29.875 us
-# Channel(0) rendezvous from put! side, nonisbits: ~15.792 us
-# Channel(0) rendezvous from take! side, nonisbits: ~29.875 us
-# Channel(0) rendezvous from put! side, payload: ~15.833 us
-# Channel(0) rendezvous from take! side, payload: ~30.750 us
+# Buffered primitive cases were flat across thread count, occupancy, and payload choice.
+# Channel(0) remains ~376x-749x slower than the buffered ~41-42 ns cases because each
+# successful transfer is a rendezvous with handoff / wakeup / scheduling cost.
+# +------------+------------------+-----------+--------+-------+
+# | payload    | case             | median    | allocs | bytes |
+# +------------+------------------+-----------+--------+-------+
+# | isbits     | buffered put!    | 42.000 ns | 0      | 0     |
+# | isbits     | buffered take!   | 41.000 ns | 0      | 0     |
+# | isbits     | channel0 put!    | 16.042 us | 0      | 0     |
+# | isbits     | channel0 take!   | 30.709 us | 0      | 0     |
+# | nonisbits  | buffered put!    | 42.000 ns | 0      | 0     |
+# | nonisbits  | buffered take!   | 41.000 ns | 0      | 0     |
+# | nonisbits  | channel0 put!    | 15.792 us | 0      | 0     |
+# | nonisbits  | channel0 take!   | 30.833 us | 0      | 0     |
+# | payload    | buffered put!    | 42.000 ns | 1      | 32    |
+# | payload    | buffered take!   | 41.000 ns | 0      | 0     |
+# | payload    | channel0 put!    | 15.834 us | 1      | 32    |
+# | payload    | channel0 take!   | 29.666 us | 1      | 32    |
+# +------------+------------------+-----------+--------+-------+
 
 using BenchmarkTools, Logging
 
