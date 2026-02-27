@@ -1,4 +1,5 @@
 using HTTP, CodecZlib, ProgressMeter, Dates, Logging, BufferedStreams, DataStructures
+using JSON: parsefile
 
 crawlpath = "https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-08/wet.paths.gz"
 crawlroot = "https://data.commoncrawl.org/"
@@ -8,6 +9,12 @@ openaicompatiblepath = "openai-compatible.json"
 
 struct PathFeed end
 struct PageFeed end
+struct ReadyDrain end
+struct BlockingDrain end
+
+Candidate = NamedTuple{(:score, :page, :file, :snippet), Tuple{Float64, Int, Int, String}}
+LlmResult = NamedTuple{(:candidate, :text), Tuple{Candidate, String}}
+ScoredPage = NamedTuple{(:page, :file, :score, :bytes, :count), Tuple{Int, Int, Float64, Vector{UInt8}, Int}}
 
 remaining(started, limit) = limit - (time() - started)
 
@@ -22,8 +29,10 @@ function budget!(meter, started, limit, halted)
 end
 
 function source(consume, url)
-    HTTP.open("GET", url) do response
-        consume(response)
+    HTTP.open("GET", url) do stream
+        HTTP.startread(stream)
+        stream.message.status == 200 || error("source failed status=$(stream.message.status) url=$(url)")
+        consume(stream)
     end
 end
 
@@ -223,12 +232,7 @@ function score(page, word, counts, targets)
     fill!(counts, 0)
     size = tokenize!(word, 0, counts, targets, page.bytes, page.count)
     word!(word, size, counts, targets)
-    sample = Vector{UInt8}(undef, min(page.count, 512))
-    for index in eachindex(sample)
-        byte = page.bytes[index]
-        sample[index] = (UInt8(' ') <= byte <= UInt8('~')) ? byte : UInt8(' ')
-    end
-    (page = page.page, file = page.file, score = distance(counts), snippet = String(sample), bytes = page.bytes)
+    (page = page.page, file = page.file, score = distance(counts), bytes = page.bytes, count = page.count)
 end
 
 function produce!(pageschannel, crawlpath, crawlroot, meter, started, limit, halted, pool, window, pages, files)
@@ -251,53 +255,51 @@ function produce!(pageschannel, crawlpath, crawlroot, meter, started, limit, hal
     end
 end
 
-function score!(scoreschannel, pageschannel, pool, targets)
+function score!(scoreschannel, pageschannel, targets)
     word = Vector{UInt8}(undef, 64)
     counts = zeros(Int, 2)
     for batch in pageschannel
-        scored = NamedTuple{(:page, :file, :score, :snippet), Tuple{Int, Int, Float64, String}}[]
+        scored = ScoredPage[]
         sizehint!(scored, length(batch))
         for page in batch
             result = score(page, word, counts, targets)
-            push!(scored, (page = result.page, file = result.file, score = result.score, snippet = result.snippet))
-            put!(pool, result.bytes)
+            push!(scored, result)
         end
         put!(scoreschannel, scored)
     end
 end
 
-function queue!(frontier, score, page, file, snippet, limit)
-    if length(frontier) < limit
-        push!(frontier, (score, page, file, snippet))
-        return nothing
+function snippet(bytes, count)
+    sample = Vector{UInt8}(undef, min(count, 512))
+    for index in eachindex(sample)
+        byte = bytes[index]
+        sample[index] = (UInt8(' ') <= byte <= UInt8('~')) ? byte : UInt8(' ')
     end
-    score < first(maximum(frontier)) || return nothing
+    String(sample)
+end
+
+function queue!(frontier, score, page, file, bytes, count, limit)
+    if length(frontier) < limit
+        push!(frontier, (score = score, page = page, file = file, snippet = snippet(bytes, count)))
+        return true
+    end
+    score < maximum(frontier).score || return false
     popmax!(frontier)
-    push!(frontier, (score, page, file, snippet))
-    nothing
-end
-
-function setting(text, name, fallback::String)
-    matchvalue = match(Regex("\"$(name)\"\\s*:\\s*\"([^\"]*)\""), text)
-    isnothing(matchvalue) ? fallback : first(matchvalue.captures)
-end
-
-function setting(text, name, fallback::Int)
-    matchvalue = match(Regex("\"$(name)\"\\s*:\\s*([0-9]+)"), text)
-    isnothing(matchvalue) ? fallback : parse(Int, first(matchvalue.captures))
+    push!(frontier, (score = score, page = page, file = file, snippet = snippet(bytes, count)))
+    true
 end
 
 function configured(path)
-    text = read(path, String)
-    (baseurl = setting(text, "base_url", "http://localhost:1234"),
-     path = setting(text, "path", "/api/v1/chat"),
-     model = setting(text, "model", "qwen/qwen3.5-35b-a3b"),
-     password = setting(text, "password", ""),
-     systemprompt = setting(text, "system_prompt", ""),
-     input = setting(text, "input", ""),
-     outputpath = setting(text, "output_path", "research.md"),
-     maxpages = setting(text, "max_pages", 1),
-     timeoutseconds = setting(text, "timeout_seconds", 120))
+    configuration = parsefile(path)
+    (baseurl = configuration["base_url"],
+     path = configuration["path"],
+     model = configuration["model"],
+     password = configuration["password"],
+     systemprompt = configuration["system_prompt"],
+     input = configuration["input"],
+     outputpath = configuration["output_path"],
+     maxpages = configuration["max_pages"],
+     timeoutseconds = configuration["timeout_seconds"])
 end
 
 function escaped(text)
@@ -312,8 +314,8 @@ function endpoint(settings)
     startswith(settings.path, "/") ? settings.baseurl * settings.path : settings.baseurl * "/" * settings.path
 end
 
-function payload(settings, score, page, file, snippet)
-    input = settings.input * "\n\npage=$(page) file=$(file) score=$(score)\n" * snippet
+function payload(settings, item::Candidate)
+    input = settings.input * "\n\npage=$(item.page) file=$(item.file) score=$(item.score)\n" * item.snippet
     "{\"model\":\"$(escaped(settings.model))\",\"system_prompt\":\"$(escaped(settings.systemprompt))\",\"input\":\"$(escaped(input))\"}"
 end
 
@@ -330,81 +332,169 @@ function headers(settings)
     settings.password == "" ? ["Content-Type" => "application/json"] : ["Content-Type" => "application/json", "Authorization" => "Bearer $(settings.password)"]
 end
 
-function write!(frontier, settings)
-    entries = 0
-    open(settings.outputpath, "a") do report
-        while !isempty(frontier) && entries < settings.maxpages
-            item = popmin!(frontier)
-            response = HTTP.post(endpoint(settings); headers = headers(settings), body = payload(settings, item[1], item[2], item[3], item[4]), readtimeout = settings.timeoutseconds)
-            text = content(response.body)
-            isempty(text) && continue
-            write(report, "\n\n## page=$(item[2]) file=$(item[3]) score=$(item[1])\n\n")
-            write(report, text)
-            entries += 1
+function request(settings, item::Candidate)
+    response = HTTP.post(endpoint(settings); headers = headers(settings), body = payload(settings, item), readtimeout = settings.timeoutseconds)
+    response.status == 200 || return (candidate = item, text = "")
+    (candidate = item, text = content(response.body))
+end
+
+function consume!(requests, responses, settings)
+    while true
+        item = take!(requests)
+        item === nothing && break
+        try
+            put!(responses, request(settings, item))
+        catch error
+            @info "llm request failed" error
+            put!(responses, (candidate = item, text = ""))
         end
     end
-    entries
+    nothing
+end
+
+function write!(report, result::LlmResult)
+    isempty(result.text) && return 0
+    write(report, "\n\n## page=$(result.candidate.page) file=$(result.candidate.file) score=$(result.candidate.score)\n\n")
+    write(report, result.text)
+    1
+end
+
+function collect!(result::LlmResult, report, completed, written, meter)
+    completed[] += 1
+    written[] += write!(report, result)
+    next!(meter)
+    nothing
+end
+
+function collect!(responses, report, completed, written, meter, ::ReadyDrain)
+    while isready(responses)
+        collect!(take!(responses), report, completed, written, meter)
+    end
+    nothing
+end
+
+function collect!(responses, report, completed, written, meter, ::BlockingDrain)
+    collect!(take!(responses), report, completed, written, meter)
+    collect!(responses, report, completed, written, meter, ReadyDrain())
+end
+
+function dispatch!(frontier, requests, submitted, limit)
+    while submitted[] < limit && !isempty(frontier) && !isfull(requests)
+        put!(requests, popmin!(frontier))
+        submitted[] += 1
+    end
+    nothing
+end
+
+function channels(poolsize, window)
+    pages = Channel{Vector{NamedTuple{(:page, :bytes, :count, :file), Tuple{Int, Vector{UInt8}, Int, Int}}}}(poolsize)
+    scores = Channel{Vector{ScoredPage}}(poolsize)
+    buffers = Channel{Vector{UInt8}}(poolsize)
+    for _ in Base.OneTo(poolsize)
+        put!(buffers, Vector{UInt8}(undef, window))
+    end
+    (pages = pages, scores = scores, buffers = buffers)
+end
+
+function llm(settings)
+    submitted = Ref(0)
+    completed = Ref(0)
+    written = Ref(0)
+    workers = Threads.nthreads()
+    requests = Channel{Union{Nothing, Candidate}}(workers)
+    responses = Channel{LlmResult}(max(settings.maxpages, workers))
+    consumers = settings.maxpages > 0 ? [Threads.@spawn consume!(requests, responses, settings) for _ in Base.OneTo(workers)] : Task[]
+    (submitted = submitted, completed = completed, written = written, workers = workers, requests = requests, responses = responses, consumers = consumers)
+end
+
+function queue!(frontier, item::ScoredPage, limit)
+    queue!(frontier, item.score, item.page, item.file, item.bytes, item.count, limit)
+end
+
+function stream!(scores, frontier, frontierlimit, state, settings, report, llmprogress, crawlprogress, buffers)
+    processed = 0
+    distancetotal = 0.0
+    for batch in scores
+        for item in batch
+            processed += 1
+            distancetotal += item.score
+            queue!(frontier, item, frontierlimit)
+            put!(buffers, item.bytes)
+            settings.maxpages == 0 || begin
+                dispatch!(frontier, state.requests, state.submitted, settings.maxpages)
+                collect!(state.responses, report, state.completed, state.written, llmprogress, ReadyDrain())
+            end
+            next!(crawlprogress)
+        end
+    end
+    (processed = processed, distancetotal = distancetotal)
+end
+
+function drain!(frontier, settings, state, report, llmprogress)
+    settings.maxpages == 0 && return nothing
+    while state.completed[] < state.submitted[] || (state.submitted[] < settings.maxpages && !isempty(frontier))
+        dispatch!(frontier, state.requests, state.submitted, settings.maxpages)
+        state.completed[] < state.submitted[] ? collect!(state.responses, report, state.completed, state.written, llmprogress, BlockingDrain()) : collect!(state.responses, report, state.completed, state.written, llmprogress, ReadyDrain())
+    end
+    nothing
+end
+
+function stop!(settings, state)
+    settings.maxpages == 0 && return nothing
+    for _ in Base.OneTo(state.workers)
+        put!(state.requests, nothing)
+    end
+    for consumer in state.consumers
+        wait(consumer)
+    end
+    nothing
 end
 
 function crawl(crawlpath, crawlroot, previewseconds)
     started = time()
     budgetmeter = ProgressThresh(0.0; output = devnull)
-    progress = ProgressUnknown(; desc = "crawl", showspeed = true, output = stdout, enabled = true, dt = 0.2)
+    crawlprogress = ProgressUnknown(; desc = "crawl pages", showspeed = true, output = stderr, enabled = true, dt = 0.2)
+    llmprogress = ProgressUnknown(; desc = "llm writes", showspeed = true, output = stderr, enabled = true, dt = 0.2, spinner = true)
     targets = (collect(codeunits("trading")), collect(codeunits("strategies")))
     window = 512
     poolsize = 128
-    pageschannel = Channel{Vector{NamedTuple{(:page, :bytes, :count, :file), Tuple{Int, Vector{UInt8}, Int, Int}}}}(poolsize)
-    scoreschannel = Channel{Vector{NamedTuple{(:page, :file, :score, :snippet), Tuple{Int, Int, Float64, String}}}}(poolsize)
-    pool = Channel{Vector{UInt8}}(poolsize)
-    for _ in Base.OneTo(poolsize)
-        put!(pool, Vector{UInt8}(undef, window))
-    end
-
+    streams = channels(poolsize, window)
     files = Ref(0)
     pages = Ref(0)
     halted = Ref(false)
-    pending = 0
-    batch = 1024
-    distance_total = 0.0
-    frontier = BinaryMinMaxHeap{Tuple{Float64, Int, Int, String}}()
+    frontier = BinaryMinMaxHeap{Candidate}()
     frontierlimit = 10_000
-    scorerworkers = 1
-
-    producer = Threads.@spawn produce!(pageschannel, crawlpath, crawlroot, budgetmeter, started, previewseconds, halted, pool, window, pages, files)
-    scorers = [Threads.@spawn score!(scoreschannel, pageschannel, pool, targets) for _ in Base.OneTo(scorerworkers)]
+    settings = configured(openaicompatiblepath)
+    state = llm(settings)
+    producer = Threads.@spawn produce!(streams.pages, crawlpath, crawlroot, budgetmeter, started, previewseconds, halted, streams.buffers, window, pages, files)
+    scorer = Threads.@spawn score!(streams.scores, streams.pages, targets)
     closer = Threads.@spawn begin
         try
-            for task in scorers
-                wait(task)
-            end
+            wait(scorer)
         finally
-            isopen(scoreschannel) && close(scoreschannel)
+            isopen(streams.scores) && close(streams.scores)
         end
     end
-
-    processed = 0
-    for batchresult in scoreschannel
-        for result in batchresult
-            processed += 1
-            distance_total += result.score
-            queue!(frontier, result.score, result.page, result.file, result.snippet, frontierlimit)
-            pending += 1
-            if pending >= batch
-                next!(progress; step = pending)
-                pending = 0
-            end
-        end
+    report = settings.maxpages > 0 ? open(settings.outputpath, "a") : nothing
+    statistics = (processed = 0, distancetotal = 0.0)
+    try
+        statistics = stream!(streams.scores, frontier, frontierlimit, state, settings, report, llmprogress, crawlprogress, streams.buffers)
+        wait(producer)
+        wait(closer)
+        finish!(crawlprogress)
+        drain!(frontier, settings, state, report, llmprogress)
+    finally
+        stop!(settings, state)
+        finish!(llmprogress)
+        isnothing(report) || close(report)
     end
-
-    wait(producer)
-    wait(closer)
-    pending > 0 && next!(progress; step = pending)
-    finish!(progress)
-    settings = configured(openaicompatiblepath)
-    written = write!(frontier, settings)
-    @info "crawl summary" query files = files[] pages = processed average_distance = (processed > 0 ? distance_total / processed : 0.0) queue_pages = length(frontier) best_distance = (isempty(frontier) ? 0.0 : first(minimum(frontier))) cutoff_distance = (isempty(frontier) ? 0.0 : first(maximum(frontier))) llm_entries = written output_path = settings.outputpath elapsed = canonicalize(Second(round(Int, time() - started)))
-    (files = files[], pages = processed, averagedistance = (processed > 0 ? distance_total / processed : 0.0), queuepages = length(frontier), bestdistance = (isempty(frontier) ? 0.0 : first(minimum(frontier))), cutoffdistance = (isempty(frontier) ? 0.0 : first(maximum(frontier))), llmentries = written, queue = frontier)
+    averagedistance = statistics.processed > 0 ? statistics.distancetotal / statistics.processed : 0.0
+    bestdistance = isempty(frontier) ? 0.0 : minimum(frontier).score
+    cutoffdistance = isempty(frontier) ? 0.0 : maximum(frontier).score
+    @info "crawl summary" query files = files[] pages = statistics.processed average_distance = averagedistance queue_pages = length(frontier) best_distance = bestdistance cutoff_distance = cutoffdistance llm_entries = state.written[] output_path = settings.outputpath elapsed = canonicalize(Second(round(Int, time() - started)))
+    (files = files[], pages = statistics.processed, averagedistance = averagedistance, queuepages = length(frontier), bestdistance = bestdistance, cutoffdistance = cutoffdistance, llmentries = state.written[], queue = frontier)
 end
 
-crawl(crawlpath, crawlroot, previewseconds)
-    
+if abspath(PROGRAM_FILE) == @__FILE__
+    crawl(crawlpath, crawlroot, previewseconds)
+end
