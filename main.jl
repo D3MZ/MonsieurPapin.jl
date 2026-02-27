@@ -1,5 +1,5 @@
 using HTTP, CodecZlib, ProgressMeter, Dates, Logging, BufferedStreams, DataStructures
-using JSON: parsefile
+using JSON: parsefile, parse
 
 crawlpath = "https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-08/wet.paths.gz"
 crawlroot = "https://data.commoncrawl.org/"
@@ -144,6 +144,18 @@ function capture!(source, bytes, scratch, meter, started, limit, halted, page, w
     copied
 end
 
+function skip!(source, bytes, scratch, meter, started, limit, halted)
+    remaining = bytes
+    while remaining > 0
+        budget!(meter, started, limit, halted) || break
+        chunk = min(remaining, length(scratch))
+        count = readbytes!(source, scratch, chunk)
+        count == 0 && break
+        remaining -= count
+    end
+    nothing
+end
+
 function feed(consume, ::PathFeed, source::IO, meter, started, limit, halted)
     for path in eachline(source)
         budget!(meter, started, limit, halted) || break
@@ -158,9 +170,8 @@ function feed(consume, feedkind::PathFeed, url, meter, started, limit, halted)
 end
 
 function feed(consume, ::PageFeed, source::IO, meter, started, limit, halted, pool, window, pages, files)
-    scratch = Vector{UInt8}(undef, 64 * 1024)
-    sink = Vector{UInt8}(undef, 1)
-    headerbuffer = IOBuffer()
+    headerstorage = Vector{UInt8}(undef, 64 * 1024)
+    headerbuffer = IOBuffer(headerstorage; read = true, write = true, truncate = true, maxsize = length(headerstorage))
     info = Ref((kind = false, bytes = 0))
     while true
         budget!(meter, started, limit, halted) || break
@@ -169,11 +180,11 @@ function feed(consume, ::PageFeed, source::IO, meter, started, limit, halted, po
         isnothing(item) && break
         if item.kind
             buffer = take!(pool)
-            used = capture!(source, item.bytes, scratch, meter, started, limit, halted, buffer, window)
+            used = capture!(source, item.bytes, headerstorage, meter, started, limit, halted, buffer, window)
             pages[] += 1
             consume((page = pages[], bytes = buffer, count = used, file = files[]))
         else
-            capture!(source, item.bytes, scratch, meter, started, limit, halted, sink, 0)
+            skip!(source, item.bytes, headerstorage, meter, started, limit, halted)
         end
     end
 end
@@ -278,14 +289,18 @@ function snippet(bytes, count)
     String(sample)
 end
 
-function queue!(frontier, score, page, file, bytes, count, limit)
+function candidate(item::ScoredPage)
+    (score = item.score, page = item.page, file = item.file, snippet = snippet(item.bytes, item.count))
+end
+
+function queue!(frontier, item::Candidate, limit)
     if length(frontier) < limit
-        push!(frontier, (score = score, page = page, file = file, snippet = snippet(bytes, count)))
+        push!(frontier, item)
         return true
     end
-    score < maximum(frontier).score || return false
+    item.score < maximum(frontier).score || return false
     popmax!(frontier)
-    push!(frontier, (score = score, page = page, file = file, snippet = snippet(bytes, count)))
+    push!(frontier, item)
     true
 end
 
@@ -306,8 +321,10 @@ function escaped(text)
     replace(text, "\\" => "\\\\", "\"" => "\\\"", "\n" => "\\n", "\r" => "\\r", "\t" => "\\t")
 end
 
-function unescaped(text)
-    replace(text, "\\n" => "\n", "\\r" => "\r", "\\t" => "\t", "\\\"" => "\"", "\\\\" => "\\")
+function visible(text)
+    clean = replace(text, r"(?s)<think>.*?</think>" => "")
+    clean = replace(clean, r"(?s)<thinking>.*?</thinking>" => "")
+    strip(clean)
 end
 
 function endpoint(settings)
@@ -319,11 +336,31 @@ function payload(settings, item::Candidate)
     "{\"model\":\"$(escaped(settings.model))\",\"system_prompt\":\"$(escaped(settings.systemprompt))\",\"input\":\"$(escaped(input))\"}"
 end
 
-function content(body)
-    response = String(body)
-    for pattern in (r"\"content\"\s*:\s*\"((?:\\.|[^\"])*)\"", r"\"output\"\s*:\s*\"((?:\\.|[^\"])*)\"", r"\"text\"\s*:\s*\"((?:\\.|[^\"])*)\"")
-        matchvalue = match(pattern, response)
-        isnothing(matchvalue) || return strip(unescaped(first(matchvalue.captures)))
+function content(body::AbstractVector{UInt8})
+    parsed = try
+        parse(String(body))
+    catch
+        nothing
+    end
+    content(parsed)
+end
+
+content(::Nothing) = ""
+content(text::AbstractString) = visible(text)
+content(::Any) = ""
+
+function content(data::AbstractVector)
+    for entry in data
+        text = content(entry)
+        isempty(text) || return text
+    end
+    ""
+end
+
+function content(data::AbstractDict)
+    for key in ("choices", "message", "output", "output_text", "content", "text", "response")
+        text = content(get(data, key, nothing))
+        isempty(text) || return text
     end
     ""
 end
@@ -400,15 +437,11 @@ function llm(settings)
     submitted = Ref(0)
     completed = Ref(0)
     written = Ref(0)
-    workers = Threads.nthreads()
+    workers = 1
     requests = Channel{Union{Nothing, Candidate}}(workers)
     responses = Channel{LlmResult}(max(settings.maxpages, workers))
     consumers = settings.maxpages > 0 ? [Threads.@spawn consume!(requests, responses, settings) for _ in Base.OneTo(workers)] : Task[]
     (submitted = submitted, completed = completed, written = written, workers = workers, requests = requests, responses = responses, consumers = consumers)
-end
-
-function queue!(frontier, item::ScoredPage, limit)
-    queue!(frontier, item.score, item.page, item.file, item.bytes, item.count, limit)
 end
 
 function stream!(scores, frontier, frontierlimit, state, settings, report, llmprogress, crawlprogress, buffers)
@@ -418,7 +451,7 @@ function stream!(scores, frontier, frontierlimit, state, settings, report, llmpr
         for item in batch
             processed += 1
             distancetotal += item.score
-            queue!(frontier, item, frontierlimit)
+            queue!(frontier, candidate(item), frontierlimit)
             put!(buffers, item.bytes)
             settings.maxpages == 0 || begin
                 dispatch!(frontier, state.requests, state.submitted, settings.maxpages)
@@ -464,13 +497,16 @@ function crawl(crawlpath, crawlroot, previewseconds)
     halted = Ref(false)
     frontier = BinaryMinMaxHeap{Candidate}()
     frontierlimit = 10_000
+    scorerworkers = Threads.nthreads() > 1 ? Threads.nthreads() - 1 : 1
     settings = configured(openaicompatiblepath)
     state = llm(settings)
     producer = Threads.@spawn produce!(streams.pages, crawlpath, crawlroot, budgetmeter, started, previewseconds, halted, streams.buffers, window, pages, files)
-    scorer = Threads.@spawn score!(streams.scores, streams.pages, targets)
+    scorers = [Threads.@spawn score!(streams.scores, streams.pages, targets) for _ in Base.OneTo(scorerworkers)]
     closer = Threads.@spawn begin
         try
-            wait(scorer)
+            for scorer in scorers
+                wait(scorer)
+            end
         finally
             isopen(streams.scores) && close(streams.scores)
         end
