@@ -5,23 +5,23 @@
 
 # Results
 # Buffered primitive cases were flat across thread count, occupancy, and payload choice.
-# Channel(0) remains ~376x-749x slower than the buffered ~41-42 ns cases because each
-# successful transfer is a rendezvous with handoff / wakeup / scheduling cost.
+# Typed channels remove the buffered Payload boxing allocation, but Channel(0) still pays
+# rendezvous cost and the Payload case still allocates on the unbuffered path.
 # +------------+------------------+-----------+--------+-------+
 # | payload    | case             | median    | allocs | bytes |
 # +------------+------------------+-----------+--------+-------+
-# | isbits     | buffered put!    | 42.000 ns | 0      | 0     |
+# | isbits     | buffered put!    | 41.000 ns | 0      | 0     |
 # | isbits     | buffered take!   | 41.000 ns | 0      | 0     |
-# | isbits     | channel0 put!    | 16.042 us | 0      | 0     |
-# | isbits     | channel0 take!   | 30.709 us | 0      | 0     |
+# | isbits     | channel0 put!    | 15.792 us | 0      | 0     |
+# | isbits     | channel0 take!   | 29.584 us | 0      | 0     |
 # | nonisbits  | buffered put!    | 42.000 ns | 0      | 0     |
-# | nonisbits  | buffered take!   | 41.000 ns | 0      | 0     |
-# | nonisbits  | channel0 put!    | 15.792 us | 0      | 0     |
-# | nonisbits  | channel0 take!   | 30.833 us | 0      | 0     |
-# | payload    | buffered put!    | 42.000 ns | 1      | 32    |
-# | payload    | buffered take!   | 41.000 ns | 0      | 0     |
-# | payload    | channel0 put!    | 15.834 us | 1      | 32    |
-# | payload    | channel0 take!   | 29.666 us | 1      | 32    |
+# | nonisbits  | buffered take!   | 42.000 ns | 0      | 0     |
+# | nonisbits  | channel0 put!    | 15.833 us | 0      | 0     |
+# | nonisbits  | channel0 take!   | 29.125 us | 0      | 0     |
+# | payload    | buffered put!    | 42.000 ns | 0      | 0     |
+# | payload    | buffered take!   | 42.000 ns | 0      | 0     |
+# | payload    | channel0 put!    | 105.417 us| 1      | 32    |
+# | payload    | channel0 take!   | 118.375 us| 1      | 32    |
 # +------------+------------------+-----------+--------+-------+
 
 using BenchmarkTools, Logging
@@ -46,19 +46,23 @@ label(::Val{:payload}) = :payload
 label(::Val{:put}) = :put
 label(::Val{:take}) = :take
 
+channel(::Val{:isbits}, capacity) = Channel{Int}(capacity)
+channel(::Val{:nonisbits}, capacity) = Channel{typeof(Ref(0))}(capacity)
+channel(::Val{:payload}, capacity) = Channel{Payload}(capacity)
+
 prime!(channel, entries) = foreach(entry -> put!(channel, entry), entries)
 
 occupancy(::Val{:put}, capacity) = unique(filter(level -> level < capacity, (0, 1, capacity ÷ 2, capacity - 1)))
 occupancy(::Val{:take}, capacity) = unique(filter(level -> 0 < level <= capacity, (1, 2, capacity ÷ 2, capacity)))
 
-measure(::Val{:put}, ::Val{0}, entry) = @benchmark put!(channel, $entry) setup=(channel = Channel(0); task = Threads.@spawn take!(channel); yield()) teardown=(fetch(task)) evals=1 seconds=0.5
-measure(::Val{:take}, ::Val{0}, entry) = @benchmark take!(channel) setup=(channel = Channel(0); task = Threads.@spawn put!(channel, $entry); yield()) teardown=(fetch(task)) evals=1 seconds=0.5
+measure(::Val{:put}, kind, ::Val{0}, entry) = @benchmark put!(channel, $entry) setup=(channel = Main.channel($kind, 0); task = Threads.@spawn take!(channel); yield()) teardown=(fetch(task)) evals=1 seconds=0.5
+measure(::Val{:take}, kind, ::Val{0}, entry) = @benchmark take!(channel) setup=(channel = Main.channel($kind, 0); task = Threads.@spawn put!(channel, $entry); yield()) teardown=(fetch(task)) evals=1 seconds=0.5
 
-measure(::Val{:put}, ::Val{capacity}, entries, entry) where {capacity} = @benchmark put!(channel, $entry) setup=(channel = Channel($capacity); prime!(channel, $entries)) evals=1 seconds=0.5
-measure(::Val{:take}, ::Val{capacity}, entries, entry) where {capacity} = @benchmark take!(channel) setup=(channel = Channel($capacity); prime!(channel, $entries)) evals=1 seconds=0.5
+measure(::Val{:put}, kind, ::Val{capacity}, entries, entry) where {capacity} = @benchmark put!(channel, $entry) setup=(channel = Main.channel($kind, $capacity); prime!(channel, $entries)) evals=1 seconds=0.5
+measure(::Val{:take}, kind, ::Val{capacity}, entries, entry) where {capacity} = @benchmark take!(channel) setup=(channel = Main.channel($kind, $capacity); prime!(channel, $entries)) evals=1 seconds=0.5
 
-measure(operation::Val, capacity, entry) = measure(operation, Val(capacity), entry)
-measure(operation::Val, capacity, entries, entry) = measure(operation, Val(capacity), entries, entry)
+measure(operation::Val, kind, capacity, entry) = measure(operation, kind, Val(capacity), entry)
+measure(operation::Val, kind, capacity, entries, entry) = measure(operation, kind, Val(capacity), entries, entry)
 
 cases(capacities, operations) = sum(capacity == 0 ? 1 : length(occupancy(operation, capacity)) for operation in operations, capacity in capacities)
 
@@ -72,13 +76,13 @@ run(capacities=(0, 1, 64, 1024, 4096, 8192), payloads=(Val(:isbits), Val(:nonisb
             for capacity in capacities
                 if capacity == 0
                     @info "Benchmark" payload=label(kind) operation=label(operation) capacity occupancy=:rendezvous
-                    display(measure(operation, capacity, entry))
+                    display(measure(operation, kind, capacity, entry))
                     continue
                 end
 
                 for level in occupancy(operation, capacity)
                     @info "Benchmark" payload=label(kind) operation=label(operation) capacity occupancy=level
-                    display(measure(operation, capacity, seed(kind, level), entry))
+                    display(measure(operation, kind, capacity, seed(kind, level), entry))
                 end
             end
         end
