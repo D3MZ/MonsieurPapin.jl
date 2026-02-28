@@ -10,12 +10,9 @@
 Not your ordinary digester: Search the entire internet summarize into a "research grade" markdown file entirely on your computer in a day or your money back!
 
 ## TODO
-Ensure performance maintains +20K pages/sec
-- [x] Streaming and decompress
-- [x] Muse fast text on pages. Score distance. initial comparison: "trading strategies"
-- [x] Insert into Priority Min Max Queue that's no more than 10K elements large.
-- [x] Generate an openai-compatible.json config for local endpoint/model/output path with optional password field.
-- [x] Have LLM pop from queue and if relevant, append write into a research markdown doc based on prompt: "If a trading strategy exists then write a small description about it and the trading strategy as pseudo code wrapped in a code fence, otherwise do not output anything". 
+TDD
+- [x] wetURIs(::URI | ::AbstractString) -> Channel{URI}(threadcount)
+- [ ] wets(::URI | ::AbstractString) -> Channel{WET}(threadcount)
 
 
 
@@ -28,6 +25,16 @@ Scoring fitness can be based on:
 
 
 ## IGNORE BELOW WIP
+
+Ensure performance maintains +20K pages/sec
+- [x] Streaming and decompress
+- [x] Muse fast text on pages. Score distance. initial comparison: "trading strategies"
+- [x] Insert into Priority Min Max Queue that's no more than 10K elements large.
+- [x] Generate an openai-compatible.json config for local endpoint/model/output path with optional password field.
+- [x] Have LLM pop from queue and if relevant, append write into a research markdown doc based on prompt: "If a trading strategy exists then write a small description about it and the trading strategy as pseudo code wrapped in a code fence, otherwise do not output anything". 
+- [ ] Fix progress bar so it displays correctly. Do benchmarking to determine if throttling the events going to it has any impact on it's performance. Report your results and if there's no performance then remove the update throttling from the code and refactor.
+- [ ] Actually use Multi lingual Fasttext properly.
+- [ ] move "trading strategy" query to the config.json file, and replace it with the text from this site: https://priceaction.com/blog/articles/simplest-trading-strategy-in-the-world/ 
 
 - [ ] Progress bar
 - [ ] stream `CC-MAIN-2026-08` and decompress
