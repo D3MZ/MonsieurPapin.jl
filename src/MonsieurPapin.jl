@@ -71,17 +71,18 @@ function header(stream)
 end
 
 function wet(stream)
-    while !eof(stream)
+    while true
         lines = header(stream)
         isnothing(lines) && return nothing
         content = String(read(stream, bytes(lines)))
         value(lines, "WARC-Type:") == "conversion" || continue
+        value(lines, "WARC-Identified-Content-Language:") === nothing && continue
         return WARC(lines, content)
     end
 end
 
 function emit(channel, stream)
-    while !eof(stream)
+    while true
         entry = wet(stream)
         isnothing(entry) && break
         put!(channel, entry)
