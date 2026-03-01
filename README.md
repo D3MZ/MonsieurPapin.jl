@@ -12,8 +12,9 @@ Not your ordinary digester: Search the entire internet summarize into a "researc
 ## TODO
 TDD
 - [x] wetURIs(::URI | ::AbstractString) -> Channel{URI}(threadcount)
-- [ ] wets(::URI | ::AbstractString) -> Channel{WET}(threadcount)
-
+- [x] wets(::URI | ::AbstractString) -> Channel{WET}(threadcount)
+- [ ] Reduce allocs: 1,783,247 allocs on 21,321 records. Each record could be read into a large buffer that's reused every time.
+- [ ] Multilanguage FastText; fasttext quantize
 
 
 Scoring fitness can be based on:

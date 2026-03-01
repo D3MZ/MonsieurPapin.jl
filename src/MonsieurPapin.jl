@@ -16,6 +16,14 @@ struct WARC
     content::String
 end
 
+struct Header
+    kind
+    uri
+    date
+    language
+    length::Int
+end
+
 WARC(uri::AbstractString, date::AbstractString, language::AbstractString, length::AbstractString, content::String) = WARC(
     URI(uri),
     DateTime(date, dateformat"yyyy-mm-ddTHH:MM:SSZ"),
@@ -49,41 +57,64 @@ function value(lines, prefix)
     end
 end
 
-bytes(lines) = parse(Int, value(lines, "Content-Length:"))
+function value(text::AbstractString, prefix)
+    start = findfirst(prefix, text)
+    isnothing(start) && return nothing
+    firstvalue = nextind(text, last(start))
+    text[firstvalue] == ' ' && (firstvalue = nextind(text, firstvalue))
+    stop = something(findnext('\n', text, firstvalue), nextind(text, lastindex(text)))
+    lastvalue = prevind(text, stop)
+    text[lastvalue] == '\r' && (lastvalue = prevind(text, lastvalue))
+    text[firstvalue:lastvalue]
+end
 
-WARC(lines, content) = WARC(
-    value(lines, "WARC-Target-URI:"),
-    value(lines, "WARC-Date:"),
-    value(lines, "WARC-Identified-Content-Language:"),
-    value(lines, "Content-Length:"),
+Header(text::AbstractString) = Header(
+    value(text, "WARC-Type:"),
+    value(text, "WARC-Target-URI:"),
+    value(text, "WARC-Date:"),
+    value(text, "WARC-Identified-Content-Language:"),
+    parse(Int, value(text, "Content-Length:")),
+)
+
+keep(header::Header) = header.kind == "conversion" && !isnothing(header.language)
+
+WARC(header::Header, content) = WARC(
+    header.uri,
+    header.date,
+    header.language,
+    string(header.length),
     content,
 )
 
-function header(stream)
-    lines = String[]
+function header(stream, buffer)
     while !eof(stream)
-        line = readline(stream)
-        isempty(line) && isempty(lines) && continue
-        isempty(line) && return lines
-        push!(lines, line)
+        truncate(buffer, 0)
+        seekstart(buffer)
+        copyuntil(buffer, stream, "\r\n\r\n")
+        text = String(take!(buffer))
+        isempty(text) && continue
+        return Header(text)
     end
-    isempty(lines) ? nothing : lines
 end
 
 function wet(stream)
+    wet(stream, IOBuffer())
+end
+
+function wet(stream, buffer)
     while true
-        lines = header(stream)
-        isnothing(lines) && return nothing
-        content = String(read(stream, bytes(lines)))
-        value(lines, "WARC-Type:") == "conversion" || continue
-        value(lines, "WARC-Identified-Content-Language:") === nothing && continue
-        return WARC(lines, content)
+        entry = header(stream, buffer)
+        isnothing(entry) && return nothing
+        content = String(read(stream, entry.length))
+        keep(entry) || continue
+        return WARC(entry, content)
     end
 end
 
 function emit(channel, stream)
+    buffer = IOBuffer()
     while true
-        entry = wet(stream)
+        entry = wet(stream, buffer)
         isnothing(entry) && break
         put!(channel, entry)
     end
