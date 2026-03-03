@@ -62,7 +62,7 @@ function header(stream, buffer)
         truncate(buffer, 0)
         seekstart(buffer)
         copyuntil(buffer, stream, "\r\n\r\n")
-        text = String(take!(buffer))
+        text = unsafe_string(pointer(buffer.data), buffer.size)
         isempty(text) && continue
         return Header(text)
     end
@@ -91,15 +91,17 @@ function emit(channel, stream)
     end
 end
 
-wets(path::AbstractString) = Channel{WET}(capacity) do channel
-    open(path) do file
-        emit(channel, GzipDecompressorStream(file))
+wets(path::AbstractString) =
+    Channel{WET}(capacity) do channel
+        open(path) do file
+            emit(channel, GzipDecompressorStream(file))
+        end
     end
-end
 
-wets(index::URI) = Channel{WET}(capacity) do channel
-    HTTP.open("GET", string(index)) do stream
-        HTTP.startread(stream)
-        emit(channel, GzipDecompressorStream(BufferedInputStream(stream)))
+wets(index::URI) =
+    Channel{WET}(capacity) do channel
+        HTTP.open("GET", string(index)) do stream
+            HTTP.startread(stream)
+            emit(channel, GzipDecompressorStream(BufferedInputStream(stream)))
+        end
     end
-end
