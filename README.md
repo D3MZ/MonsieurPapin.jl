@@ -36,6 +36,8 @@ Scoring fitness can be based on:
 
 ## IGNORE BELOW WIP
 
+Stream 68.63 MiB/s into memory
+
 In core.jl
 ```julia
 function research(exampleuri)
