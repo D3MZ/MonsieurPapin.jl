@@ -19,7 +19,7 @@ TDD
 - [x] turn embedding into a type, and dispatch on isrelevant(embedding, string), add test.
 - [x] add embedding(string) constructor.
 - [x] gettext(URI)::String. This downloads a webpage and gets the text from it. live test on example.
-- [ ] 
+- [x] replace config.json with a struct in `core.jl`, update and simplify references
 
 
 Scoring fitness can be based on:
@@ -31,6 +31,10 @@ Scoring fitness can be based on:
 
 
 ## IGNORE BELOW WIP
+
+In core.jl
+research(exampleuri)
+
 
 Ensure performance maintains +20K pages/sec
 - [x] Streaming and decompress

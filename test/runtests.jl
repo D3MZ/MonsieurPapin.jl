@@ -23,6 +23,7 @@ end
 
 include("fasttext.jl")
 include("gettext.jl")
+include("core.jl")
 
 
 # using CodecZlib

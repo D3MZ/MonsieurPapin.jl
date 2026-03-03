@@ -91,14 +91,14 @@ function emit(channel, stream)
     end
 end
 
-wets(path::AbstractString) =
+wets(path::AbstractString; capacity=10) =
     Channel{WET}(capacity) do channel
         open(path) do file
             emit(channel, GzipDecompressorStream(file))
         end
     end
 
-wets(index::URI) =
+wets(index::URI; capacity=10) =
     Channel{WET}(capacity) do channel
         HTTP.open("GET", string(index)) do stream
             HTTP.startread(stream)
