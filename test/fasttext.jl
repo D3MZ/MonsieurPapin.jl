@@ -19,10 +19,14 @@ using Test
     @test isrelevant(catdog, "kitten dog"; threshold=0.8)
     @test isrelevant(catdog, MonsieurPapin.embedding("kitten dog", model); threshold=0.8)
     @test !isrelevant(catdog, banana; threshold=0.6)
-    @test first(collect(relevant(catdog, Channel{WET}(2) do wets
+    filtered = collect(relevant!(catdog, Channel{WET}(2) do wets
         put!(wets, catpage)
         put!(wets, fruitpage)
-    end; threshold=0.8))).content == "kitten dog"
+    end; threshold=0.8))
+    @test first(filtered).content == "kitten dog"
+    @test first(filtered) === catpage
+    @test catpage.score < fruitpage.score
+    @test catpage.score <= 1.0 - 0.8
 
     if get(ENV, "MONSIEURPAPIN_BENCHMARK", "false") == "true"
         display(@benchmark isrelevant("cat dog", "kitten dog"; threshold=0.8, vecpath=$vecpath))

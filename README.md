@@ -22,6 +22,7 @@ TDD
 - [x] replace config.json with a struct in `core.jl`, update and simplify references
 - [x] dispatch isrelevant(source::Embedding, wet::WET)
 - [x] relevant(source::Embedding, wets::Channel{WET})
+- [x] update WET struct to include score::Float, rename relevant to relevant!, have it update score based on distance.
 - [ ] 
 
 
@@ -41,8 +42,8 @@ function research(exampleuri)
   source = embedding(exampleuri)
   weturis
   wets
-  coarsefiltered = relevant(source, wets)
-  coarsefilter 
+  filtered = relevant!(source, wets)
+  add to queue
   end 
 end
 ```

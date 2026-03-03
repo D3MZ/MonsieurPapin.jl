@@ -59,6 +59,12 @@ function similarity(string1::AbstractString, string2::AbstractString, model::Fas
     similarity(embedding(string1, model), embedding(string2, model))
 end
 
+distance(firstembedding::Embedding, secondembedding::Embedding) = 1.0 - similarity(firstembedding, secondembedding)
+
+function distance(source::Embedding, wet::WET)
+    distance(source, embedding(wet.content, source.source))
+end
+
 function isrelevant(firstembedding::Embedding, secondembedding::Embedding; threshold=0.6)
     similarity(firstembedding, secondembedding) >= threshold
 end
@@ -75,10 +81,15 @@ function isrelevant(source::Embedding, wet::WET; threshold=0.6)
     isrelevant(source, wet.content; threshold)
 end
 
-function relevant(source::Embedding, wets::Channel{WET}; capacity=10, threshold=0.6)
+function score!(source::Embedding, wet::WET)
+    wet.score = distance(source, wet)
+    wet
+end
+
+function relevant!(source::Embedding, wets::Channel{WET}; capacity=10, threshold=0.6)
     Channel{WET}(capacity) do filtered
         Threads.foreach(wets) do wet
-            isrelevant(source, wet; threshold) && put!(filtered, wet)
+            score!(source, wet).score <= 1.0 - threshold && put!(filtered, wet)
         end
     end
 end
