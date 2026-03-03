@@ -48,6 +48,8 @@ function embedding(text::AbstractString, model::FastText)
     Embedding(model, values)
 end
 
+embedding(text::AbstractString; vecpath="data/wiki-news-300d-1M.vec") = embedding(text, fasttext(vecpath))
+
 function similarity(firstembedding::Embedding, secondembedding::Embedding)
     dot(firstembedding.values, secondembedding.values) /
     (norm(firstembedding.values) * norm(secondembedding.values) + eps())

@@ -17,7 +17,9 @@ TDD
 - [x] Add isrelevant(string1, string2; threshold=0.6, vecpath="data/wiki-news-300d-1M.vec") function in `src/fasttext.jl`, and test.
   - [ ] do research on quantize, subword, etc.
 - [x] turn embedding into a type, and dispatch on isrelevant(embedding, string), add test.
-- [ ] add gettext(uri; configpath="config.json") to `src/llm.jl`
+- [x] add embedding(string) constructor.
+- [x] gettext(URI)::String. This downloads a webpage and gets the text from it. live test on example.
+- [ ] 
 
 
 Scoring fitness can be based on:

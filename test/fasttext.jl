@@ -7,6 +7,7 @@ using Test
     catdog = MonsieurPapin.embedding("cat dog", model)
     banana = MonsieurPapin.embedding("banana", model)
 
+    @test embedding("cat dog"; vecpath).values ≈ catdog.values
     @test isrelevant("cat dog", "kitten dog"; threshold=0.8, vecpath)
     @test !isrelevant("cat", "banana"; threshold=0.6, vecpath)
     @test isrelevant("CAT, dog!", "kitten dog"; threshold=0.8, vecpath)
