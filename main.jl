@@ -1,11 +1,6 @@
 using HTTP, CodecZlib, ProgressMeter, Dates, Logging, BufferedStreams, DataStructures
-using JSON: parsefile, parse
-
-crawlpath = "https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-08/wet.paths.gz"
-crawlroot = "https://data.commoncrawl.org/"
-previewseconds = 8.0
-query = "trading strategies"
-openaicompatiblepath = "openai-compatible.json"
+using JSON: parse
+using MonsieurPapin: Research
 
 struct PathFeed end
 struct PageFeed end
@@ -304,19 +299,6 @@ function queue!(frontier, item::Candidate, limit)
     true
 end
 
-function configured(path)
-    configuration = parsefile(path)
-    (baseurl = configuration["base_url"],
-     path = configuration["path"],
-     model = configuration["model"],
-     password = configuration["password"],
-     systemprompt = configuration["system_prompt"],
-     input = configuration["input"],
-     outputpath = configuration["output_path"],
-     maxpages = configuration["max_pages"],
-     timeoutseconds = configuration["timeout_seconds"])
-end
-
 function escaped(text)
     replace(text, "\\" => "\\\\", "\"" => "\\\"", "\n" => "\\n", "\r" => "\\r", "\t" => "\\t")
 end
@@ -483,7 +465,7 @@ function stop!(settings, state)
     nothing
 end
 
-function crawl(crawlpath, crawlroot, previewseconds)
+function crawl(settings = Research())
     started = time()
     budgetmeter = ProgressThresh(0.0; output = devnull)
     crawlprogress = ProgressUnknown(; desc = "crawl pages", showspeed = true, output = stderr, enabled = true, dt = 0.2)
@@ -498,9 +480,8 @@ function crawl(crawlpath, crawlroot, previewseconds)
     frontier = BinaryMinMaxHeap{Candidate}()
     frontierlimit = 10_000
     scorerworkers = Threads.nthreads() > 1 ? Threads.nthreads() - 1 : 1
-    settings = configured(openaicompatiblepath)
     state = llm(settings)
-    producer = Threads.@spawn produce!(streams.pages, crawlpath, crawlroot, budgetmeter, started, previewseconds, halted, streams.buffers, window, pages, files)
+    producer = Threads.@spawn produce!(streams.pages, settings.crawlpath, settings.crawlroot, budgetmeter, started, settings.previewseconds, halted, streams.buffers, window, pages, files)
     scorers = [Threads.@spawn score!(streams.scores, streams.pages, targets) for _ in Base.OneTo(scorerworkers)]
     closer = Threads.@spawn begin
         try
@@ -527,10 +508,10 @@ function crawl(crawlpath, crawlroot, previewseconds)
     averagedistance = statistics.processed > 0 ? statistics.distancetotal / statistics.processed : 0.0
     bestdistance = isempty(frontier) ? 0.0 : minimum(frontier).score
     cutoffdistance = isempty(frontier) ? 0.0 : maximum(frontier).score
-    @info "crawl summary" query files = files[] pages = statistics.processed average_distance = averagedistance queue_pages = length(frontier) best_distance = bestdistance cutoff_distance = cutoffdistance llm_entries = state.written[] output_path = settings.outputpath elapsed = canonicalize(Second(round(Int, time() - started)))
+    @info "crawl summary" query = settings.query files = files[] pages = statistics.processed average_distance = averagedistance queue_pages = length(frontier) best_distance = bestdistance cutoff_distance = cutoffdistance llm_entries = state.written[] output_path = settings.outputpath elapsed = canonicalize(Second(round(Int, time() - started)))
     (files = files[], pages = statistics.processed, averagedistance = averagedistance, queuepages = length(frontier), bestdistance = bestdistance, cutoffdistance = cutoffdistance, llmentries = state.written[], queue = frontier)
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
-    crawl(crawlpath, crawlroot, previewseconds)
+    crawl()
 end
