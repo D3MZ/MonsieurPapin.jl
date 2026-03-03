@@ -9,3 +9,5 @@ Manifest.toml
 docs/build/
 scratch*
 scratch/
+*.vec
+research/warc.wet.gz
