@@ -1,8 +1,11 @@
+using Aqua
 using MonsieurPapin
 using Test
 using HTTP: URI
 
 @testset "MonsieurPapin.jl" begin
+    Aqua.test_all(MonsieurPapin; stale_deps=false, deps_compat=false)
+
     wetpath = joinpath(@__DIR__, "data", "wet.paths.gz")
     uris = wetURIs(wetpath)
     @test @allocations(first(uris)) == 1 # 125.000 ns  Memory estimate: 192 bytes, allocs estimate: 1.
@@ -38,5 +41,4 @@ end
 
 using BenchmarkTools
 
-display(@benchmark sum(_ -> 1, channel) setup=(path = joinpath(@__DIR__, "test", "data", "warc.wet.gz"); channel = wets(path)) evals=1)
-
+display(@benchmark sum(_ -> 1, channel) setup = (path = joinpath(@__DIR__, "data", "warc.wet.gz"); channel = wets(path)) evals = 1)

@@ -4,8 +4,10 @@ version = "1.0.0-DEV"
 authors = ["Demetrius Michael <arrrwalktheplank@gmail.com>"]
 
 [deps]
+Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 BufferedStreams = "e1450e63-4bb3-523b-b2a4-4ffa8c0fd77d"
+CodeComplexity = "6a833b0f-2137-4092-987b-66bce4e6b438"
 CodecZlib = "944b1d66-785c-5afd-91f1-9de20f533193"
 DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
@@ -16,8 +18,10 @@ ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
 TranscodingStreams = "3bb67fe8-82b1-5028-8e26-92a6c54297fa"
 
 [compat]
+Aqua = "0.8.14"
 BenchmarkTools = "1.6.3"
 BufferedStreams = "1.2.2"
+CodeComplexity = "0.1.1"
 DataStructures = "0.19.3"
 HTTP = "1.10.19"
 JSON = "1.4.0"
