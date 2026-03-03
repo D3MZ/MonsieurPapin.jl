@@ -1,10 +1,12 @@
 using Aqua
+using CodeComplexity
 using MonsieurPapin
 using Test
 using HTTP: URI
 
 @testset "MonsieurPapin.jl" begin
     Aqua.test_all(MonsieurPapin; stale_deps=false, deps_compat=false)
+    @test isempty(check_complexity(joinpath(dirname(@__DIR__), "src"); max_complexity=5, throw_on_violation=false))
 
     wetpath = joinpath(@__DIR__, "data", "wet.paths.gz")
     uris = wetURIs(wetpath)
