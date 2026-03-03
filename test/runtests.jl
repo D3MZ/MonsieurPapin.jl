@@ -22,6 +22,7 @@ using HTTP: URI
 end
 
 include("fasttext.jl")
+include("gettext.jl")
 
 
 # using CodecZlib
