@@ -33,7 +33,15 @@ Scoring fitness can be based on:
 ## IGNORE BELOW WIP
 
 In core.jl
-research(exampleuri)
+```julia
+function research(exampleuri)
+  source = embedding(exampleuri)
+  for weturi in weturis
+    for wet in wets()
+  end 
+end
+```
+
 
 
 Ensure performance maintains +20K pages/sec
