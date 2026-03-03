@@ -4,6 +4,11 @@ struct FastText
     vectors::Dict{String,Vector{Float32}}
 end
 
+struct Embedding
+    source::FastText
+    values::Vector{Float32}
+end
+
 const fasttexts = Dict{String,FastText}()
 
 tokenize(text::AbstractString) = [String(match.match) for match in eachmatch(r"[[:word:]]+", lowercase(text))]
@@ -39,14 +44,29 @@ function embedding(text::AbstractString, model::FastText)
         haskey(model.vectors, token) && push!(vectors, model.vectors[token])
     end
 
-    isempty(vectors) && return zeros(Float32, model.width)
-    sum(vectors) ./ length(vectors)
+    values = isempty(vectors) ? zeros(Float32, model.width) : sum(vectors) ./ length(vectors)
+    Embedding(model, values)
+end
+
+function similarity(firstembedding::Embedding, secondembedding::Embedding)
+    dot(firstembedding.values, secondembedding.values) /
+    (norm(firstembedding.values) * norm(secondembedding.values) + eps())
 end
 
 function similarity(string1::AbstractString, string2::AbstractString, model::FastText)
-    firstembedding = embedding(string1, model)
-    secondembedding = embedding(string2, model)
-    dot(firstembedding, secondembedding) / (norm(firstembedding) * norm(secondembedding) + eps())
+    similarity(embedding(string1, model), embedding(string2, model))
+end
+
+function isrelevant(firstembedding::Embedding, secondembedding::Embedding; threshold=0.6)
+    similarity(firstembedding, secondembedding) >= threshold
+end
+
+function isrelevant(firstembedding::Embedding, text::AbstractString; threshold=0.6)
+    isrelevant(firstembedding, embedding(text, firstembedding.source); threshold)
+end
+
+function isrelevant(text::AbstractString, secondembedding::Embedding; threshold=0.6)
+    isrelevant(secondembedding, text; threshold)
 end
 
 function isrelevant(string1::AbstractString, string2::AbstractString; threshold=0.6, vecpath="data/wiki-news-300d-1M.vec")

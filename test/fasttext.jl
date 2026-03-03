@@ -3,11 +3,17 @@ using Test
 
 @testset "fasttext" begin
     vecpath = joinpath(dirname(@__DIR__), "test", "data", "fasttext.vec")
+    model = MonsieurPapin.fasttext(vecpath)
+    catdog = MonsieurPapin.embedding("cat dog", model)
+    banana = MonsieurPapin.embedding("banana", model)
 
     @test isrelevant("cat dog", "kitten dog"; threshold=0.8, vecpath)
     @test !isrelevant("cat", "banana"; threshold=0.6, vecpath)
     @test isrelevant("CAT, dog!", "kitten dog"; threshold=0.8, vecpath)
     @test !isrelevant("unknown phrase", "banana"; threshold=0.1, vecpath)
+    @test isrelevant(catdog, "kitten dog"; threshold=0.8)
+    @test isrelevant(catdog, MonsieurPapin.embedding("kitten dog", model); threshold=0.8)
+    @test !isrelevant(catdog, banana; threshold=0.6)
 
     if get(ENV, "MONSIEURPAPIN_BENCHMARK", "false") == "true"
         display(@benchmark isrelevant("cat dog", "kitten dog"; threshold=0.8, vecpath=$vecpath))
