@@ -1,9 +1,10 @@
-struct WET
+mutable struct WET
     uri::URI
     date::DateTime
     language::String
     length::Int
     content::String
+    score::Float64
 end
 
 struct Header
@@ -20,6 +21,7 @@ WET(uri::AbstractString, date::AbstractString, language::AbstractString, length:
     String(language),
     parse(Int, length),
     content,
+    Inf,
 )
 
 function value(lines, prefix)
@@ -50,9 +52,9 @@ Header(text::AbstractString) = Header(
 keep(header::Header) = header.kind == "conversion" && !isnothing(header.language)
 
 WET(header::Header, content) = WET(
-    header.uri,
-    header.date,
-    header.language,
+    String(header.uri),
+    String(header.date),
+    String(header.language),
     string(header.length),
     content,
 )
