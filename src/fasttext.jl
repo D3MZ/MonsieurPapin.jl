@@ -75,6 +75,14 @@ function isrelevant(source::Embedding, wet::WET; threshold=0.6)
     isrelevant(source, wet.content; threshold)
 end
 
+function relevant(source::Embedding, wets::Channel{WET}; capacity=10, threshold=0.6)
+    Channel{WET}(capacity) do filtered
+        Threads.foreach(wets) do wet
+            isrelevant(source, wet; threshold) && put!(filtered, wet)
+        end
+    end
+end
+
 function isrelevant(string1::AbstractString, string2::AbstractString; threshold=0.6, vecpath="data/wiki-news-300d-1M.vec")
     similarity(string1, string2, fasttext(vecpath)) >= threshold
 end

@@ -20,6 +20,9 @@ TDD
 - [x] add embedding(string) constructor.
 - [x] gettext(URI)::String. This downloads a webpage and gets the text from it. live test on example.
 - [x] replace config.json with a struct in `core.jl`, update and simplify references
+- [x] dispatch isrelevant(source::Embedding, wet::WET)
+- [x] relevant(source::Embedding, wets::Channel{WET})
+- [ ] 
 
 
 Scoring fitness can be based on:
@@ -36,8 +39,10 @@ In core.jl
 ```julia
 function research(exampleuri)
   source = embedding(exampleuri)
-  for weturi in weturis
-    for wet in wets()
+  weturis
+  wets
+  coarsefiltered = relevant(source, wets)
+  coarsefilter 
   end 
 end
 ```

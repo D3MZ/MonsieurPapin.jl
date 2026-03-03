@@ -3,7 +3,7 @@ module MonsieurPapin
 using HTTP, CodecZlib, BufferedStreams, Dates, LinearAlgebra
 using HTTP: URI
 
-export WET, wetURIs, wets, Configuration, Embedding, embedding, gettext, isrelevant
+export WET, wetURIs, wets, Configuration, Embedding, embedding, gettext, isrelevant, relevant
 
 
 include("core.jl")
