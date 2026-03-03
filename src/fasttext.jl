@@ -71,6 +71,10 @@ function isrelevant(text::AbstractString, secondembedding::Embedding; threshold=
     isrelevant(secondembedding, text; threshold)
 end
 
+function isrelevant(source::Embedding, wet::WET; threshold=0.6)
+    isrelevant(source, wet.content; threshold)
+end
+
 function isrelevant(string1::AbstractString, string2::AbstractString; threshold=0.6, vecpath="data/wiki-news-300d-1M.vec")
     similarity(string1, string2, fasttext(vecpath)) >= threshold
 end
