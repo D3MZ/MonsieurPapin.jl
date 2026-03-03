@@ -14,6 +14,9 @@ TDD
 - [x] wetURIs(::URI | ::AbstractString) -> Channel{URI}(threadcount)
 - [x] wets(::URI | ::AbstractString) -> Channel{WET}(threadcount)
 - [ ] Reduce allocs: 1,783,247 allocs on 21,321 records. Each record could be read into a large buffer that's reused every time.
+- [ ] Add isrelevant(string1, string2; threshold=0.6, vecpath="data/wiki-news-300d-1M.vec") function in `src/fasttext.jl`, and test.
+  - [ ] do research on quantize, subword, etc.
+- [ ]
 - [ ] Multilanguage FastText; fasttext quantize
 
 
@@ -45,19 +48,19 @@ Ensure performance maintains +20K pages/sec
   - [ ] Put `.warc.wet.gz` file URLs into `weturls::Channel{String}`
   - [ ] Stream-download WET files into `wetstreams::Channel{IO}` sized from `DownloadSettings.ram` at init.
   - [ ] Stream-decompress gzip
-  - [ ] Stream WARC records efficiently into a Julia `warcs::Channel{WARC}` sized to 2x embedding batch.
+  - [ ] Stream WET records efficiently into a Julia `warcs::Channel{WET}` sized to 2x embedding batch.
     - [ ] Use Content-Length from header to efficiently read plaintext content.
-    - [ ] Parse WARC into `WARC` types, have the types go into the `warcs` channel
+    - [ ] Parse WET into `WET` types, have the types go into the `warcs` channel
 
 - [ ] Embedding Stage (CPU) for coarse semantic filtering
   - [ ] Take from the `warcs` channel and filter using GemmaEmbeddings model on CPU
     - [ ] normalize the content 
     - [ ] Tokenize up to `EmbeddingSettings.context` length of tokens
     - [ ] Embed on CPU
-    - [ ] If cosine similarity is within `EmbeddingSettings.distance` then put into `filteredwarcs::Channel{WARC}` sized to `2 * LLMSettings.batchsize`.
+    - [ ] If cosine similarity is within `EmbeddingSettings.distance` then put into `filteredwarcs::Channel{WET}` sized to `2 * LLMSettings.batchsize`.
 
 - [ ] LLM Stage (GPU) for summarizing
-  - [ ] Take from `filteredwarcs` channel and pack into `llmbatches::Channel{Vector{WARC}}` sized from `LLMSettings.gpumemory` at init.
+  - [ ] Take from `filteredwarcs` channel and pack into `llmbatches::Channel{Vector{WET}}` sized from `LLMSettings.gpumemory` at init.
   - [ ] Batch pages for GPU inference up to memory limits using `LLMSettings.batchsize`.
   - [ ] Have LLM append to markdown file.
 
