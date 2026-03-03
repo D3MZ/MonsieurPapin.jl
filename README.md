@@ -16,9 +16,8 @@ TDD
 - [ ] Reduce allocs: 1,783,247 allocs on 21,321 records. Each record could be read into a large buffer that's reused every time.
 - [x] Add isrelevant(string1, string2; threshold=0.6, vecpath="data/wiki-news-300d-1M.vec") function in `src/fasttext.jl`, and test.
   - [ ] do research on quantize, subword, etc.
-- [ ] turn embedding into a type, and dispatch on isrelevant(embedding, string), add test.
-- [ ] add gettext(uri; configpath="config.json") to `src/llm.jl`. This will 
-- [ ] Multilanguage FastText; fasttext quantize
+- [x] turn embedding into a type, and dispatch on isrelevant(embedding, string), add test.
+- [ ] add gettext(uri; configpath="config.json") to `src/llm.jl`
 
 
 Scoring fitness can be based on:
