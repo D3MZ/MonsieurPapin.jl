@@ -48,6 +48,7 @@ function embedding(text::AbstractString, model::FastText)
     Embedding(model, values)
 end
 
+embedding(text::AbstractVector{UInt8}, model::FastText) = embedding(String(text), model)
 embedding(text::AbstractString; vecpath="data/wiki-news-300d-1M.vec") = embedding(text, fasttext(vecpath))
 
 function similarity(firstembedding::Embedding, secondembedding::Embedding)
@@ -61,8 +62,8 @@ end
 
 distance(firstembedding::Embedding, secondembedding::Embedding) = 1.0 - similarity(firstembedding, secondembedding)
 
-function distance(source::Embedding, wet::WET)
-    distance(source, embedding(wet.content, source.source))
+function distance(source::Embedding, pages::Wets, wet::WET)
+    distance(source, embedding(content(pages, wet), source.source))
 end
 
 function isrelevant(firstembedding::Embedding, secondembedding::Embedding; threshold=0.6)
@@ -73,25 +74,28 @@ function isrelevant(firstembedding::Embedding, text::AbstractString; threshold=0
     isrelevant(firstembedding, embedding(text, firstembedding.source); threshold)
 end
 
+function isrelevant(firstembedding::Embedding, text::AbstractVector{UInt8}; threshold=0.6)
+    isrelevant(firstembedding, embedding(text, firstembedding.source); threshold)
+end
+
 function isrelevant(text::AbstractString, secondembedding::Embedding; threshold=0.6)
     isrelevant(secondembedding, text; threshold)
 end
 
-function isrelevant(source::Embedding, wet::WET; threshold=0.6)
-    isrelevant(source, wet.content; threshold)
+function isrelevant(source::Embedding, pages::Wets, wet::WET; threshold=0.6)
+    isrelevant(source, content(pages, wet); threshold)
 end
 
-function score!(source::Embedding, wet::WET)
-    wet.score = distance(source, wet)
-    wet
-end
+score(source::Embedding, pages::Wets, wet::WET) = scored(wet, distance(source, pages, wet))
 
-function relevant!(source::Embedding, wets::Channel{WET}; capacity=10, threshold=0.6)
-    Channel{WET}(capacity) do filtered
-        Threads.foreach(wets) do wet
-            score!(source, wet).score <= 1.0 - threshold && put!(filtered, wet)
+function relevant!(source::Embedding, pages::Wets; capacity=10, threshold=0.6)
+    entries = Channel{WET}(capacity) do filtered
+        Threads.foreach(pages.entries) do wet
+            candidate = score(source, pages, wet)
+            candidate.score <= 1.0 - threshold && put!(filtered, candidate)
         end
     end
+    Wets(entries, pages.buffers)
 end
 
 function isrelevant(string1::AbstractString, string2::AbstractString; threshold=0.6, vecpath="data/wiki-news-300d-1M.vec")

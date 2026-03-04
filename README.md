@@ -36,18 +36,7 @@ Scoring fitness can be based on:
 
 ## IGNORE BELOW WIP
 
-enqueue
 
-
-wetURIs -> Channel{URI}(capacity)
-wets(uri) -> (Channel{WET}(capacity), buffer)
-Channel{WET}(capacity) do ch
-           f = i -> put!(ch, i^2)
-           Threads.foreach(f, c)
-       end
-
-
-Stream 68.63 MiB/s into memory
 
 In core.jl
 ```julia
