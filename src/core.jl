@@ -26,16 +26,36 @@ end
 
 coarsefilter(config::Configuration) = coarsefilter(config, wets(config))
 
+append!(file, output::AbstractString) = isempty(output) ? file : (write(file, output, "\n"); flush(file); file)
+
+process!(file, pages::Wets, client, wet::WET) = append!(file, complete(String(content(pages, wet)), client))
+
+function process!(file, pages::Wets, client, entries::Frontier{WET})
+    wet = best!(entries)
+    isnothing(wet) ? file : process!(file, pages, client, wet)
+end
+
+function stream!(file, pages::Wets, client, entries::Frontier{WET})
+    for wet in pages.entries
+        insert!(entries, wet)
+        length(entries) == entries.capacity && process!(file, pages, client, entries)
+    end
+    file
+end
+
+function flush!(file, pages::Wets, client, entries::Frontier{WET})
+    while !isempty(entries)
+        process!(file, pages, client, entries)
+    end
+    file
+end
+
 function report(config::Configuration, pages::Wets, client)
     entries = frontier(config.capacity, WET)
-    drain!(entries, pages.entries)
-    open(config.outputpath, "w") do file
-        while true
-            wet = best!(entries)
-            isnothing(wet) && return config.outputpath
-            output = complete(String(content(pages, wet)), client)
-            isempty(output) || write(file, output, "\n")
-        end
+    open(config.outputpath, "a") do file
+        stream!(file, pages, client, entries)
+        flush!(file, pages, client, entries)
+        config.outputpath
     end
 end
 
