@@ -17,7 +17,6 @@ Base.@kwdef struct Configuration
 end
 
 source(config::Configuration) = embedding(config.query; vecpath=config.vecpath)
-llm(config::Configuration) = LLM(; baseurl=config.baseurl, path=config.path, model=config.model, password=config.password, systemprompt=config.systemprompt, input=config.input, timeoutseconds=config.timeoutseconds)
 weturis(config::Configuration) = wetURIs(config.crawlpath; capacity=config.capacity, wetroot=config.crawlroot)
 wets(config::Configuration) = wets(weturis(config); capacity=config.capacity)
 
@@ -27,20 +26,20 @@ end
 
 coarsefilter(config::Configuration) = coarsefilter(config, wets(config))
 
-function report(config::Configuration, pages::Wets, model::AbstractLLM)
+function report(config::Configuration, pages::Wets, client)
     entries = frontier(config.capacity, WET)
     drain!(entries, pages.entries)
     open(config.outputpath, "w") do file
         while true
             wet = best!(entries)
             isnothing(wet) && return config.outputpath
-            output = complete(String(content(pages, wet)), model)
+            output = complete(String(content(pages, wet)), client)
             isempty(output) || write(file, output, "\n")
         end
     end
 end
 
-report(config::Configuration, pages::Wets) = report(config, pages, llm(config))
+report(config::Configuration, pages::Wets) = report(config, pages, config)
 queue(config::Configuration, entries::Wets) = Threads.@spawn report(config, entries)
 
 function research(config::Configuration)
