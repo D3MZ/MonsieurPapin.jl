@@ -8,6 +8,7 @@ include("fasttext.jl")
 include("gettext.jl")
 include("core.jl")
 include("queue.jl")
+include("llm.jl")
 
 @testset "MonsieurPapin.jl" begin
     Aqua.test_all(MonsieurPapin; stale_deps=false, deps_compat=false)
