@@ -7,6 +7,7 @@ using HTTP: URI
 include("fasttext.jl")
 include("gettext.jl")
 include("core.jl")
+include("queue.jl")
 
 @testset "MonsieurPapin.jl" begin
     Aqua.test_all(MonsieurPapin; stale_deps=false, deps_compat=false)
