@@ -10,6 +10,8 @@ include("core.jl")
 include("queue.jl")
 include("llm.jl")
 
+one(_) = 1
+
 @testset "MonsieurPapin.jl" begin
     Aqua.test_all(MonsieurPapin; stale_deps=false, deps_compat=false)
     @test isempty(check_complexity(joinpath(dirname(@__DIR__), "src"); max_complexity=5, throw_on_violation=false))
@@ -21,11 +23,11 @@ include("llm.jl")
     path = joinpath(dirname(@__DIR__), "data", "warc.wet.gz")
     channel = wets(path)
     @test @allocations(first(channel)) == 0
-    @test sum(_ -> 1, wets([path, path])) == 2 * sum(_ -> 1, wets(path))
+    @test sum(one, wets([path, path])) == 2 * sum(one, wets(path))
 
     # warm up the channel allocation footprint before testing
-    sum(_ -> 1, wets(path))
-    @test @allocations(sum(_ -> 1, wets(path))) < 100
+    sum(one, wets(path))
+    @test @allocations(sum(one, wets(path))) < 100
 end
 
 
