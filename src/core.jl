@@ -18,16 +18,9 @@ end
 
 source(config::Configuration) = embedding(config.query; vecpath=config.vecpath)
 weturis(config::Configuration) = wetURIs(config.crawlpath; capacity=config.capacity, wetroot=config.crawlroot)
+wets(config::Configuration) = wets(weturis(config); capacity=config.capacity)
 
-function wets(config::Configuration)
-    Channel{WET}(config.capacity) do entries
-        foreach(weturis(config)) do uri
-            foreach(wet -> put!(entries, wet), wets(uri; capacity=config.capacity))
-        end
-    end
-end
-
-function coarsefilter(config::Configuration, entries::Channel{WET})
+function coarsefilter(config::Configuration, entries::Wets)
     relevant!(source(config), entries; capacity=config.capacity, threshold=config.threshold)
 end
 
