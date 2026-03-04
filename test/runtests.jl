@@ -15,6 +15,7 @@ using HTTP: URI
     path = joinpath(dirname(@__DIR__), "data", "warc.wet.gz")
     channel = wets(path)
     @test @allocations(first(channel)) == 1 #250.000 ns  Memory estimate: 224 bytes, allocs estimate: 1.
+    @test sum(_ -> 1, wets([path, path])) == 2 * sum(_ -> 1, wets(path))
 
     # warm up the channel allocation footprint before testing
     sum(_ -> 1, wets(path))
