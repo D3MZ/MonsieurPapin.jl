@@ -107,3 +107,10 @@ wets(index::URI; capacity=10) =
             emit(channel, GzipDecompressorStream(BufferedInputStream(stream)))
         end
     end
+
+wets(paths::AbstractVector{<:Union{AbstractString,URI}}; capacity=10) =
+    Channel{WET}(capacity) do channel
+        foreach(paths) do path
+            foreach(wet -> put!(channel, wet), wets(path; capacity))
+        end
+    end
