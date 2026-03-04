@@ -25,8 +25,10 @@ function coarsefilter(config::Configuration, entries::Wets)
 end
 
 coarsefilter(config::Configuration) = coarsefilter(config, wets(config))
+queue(config::Configuration, entries::Wets) = Threads.@spawn best(entries; capacity=config.capacity)
 
 function research(config::Configuration)
     entries = wets(config)
-    coarsefilter(config, entries)
+    filtered = coarsefilter(config, entries)
+    queue(config, filtered)
 end

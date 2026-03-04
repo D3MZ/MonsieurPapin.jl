@@ -23,7 +23,12 @@ TDD
 - [x] dispatch isrelevant(source::Embedding, wet::WET)
 - [x] relevant(source::Embedding, wets::Channel{WET})
 - [x] update WET struct to include score::Float, rename relevant to relevant!, have it update score based on distance.
-- [ ] 
+- [x] in `src/queue.jl` binary heap queues that maintain a certain size.
+  - [x] drains channel into queue maintaining a certain size (check before insert)
+  - [x] drains channel and gets the best element (smallest distance)
+  - [x] add tests that prove no allocation and expected performance based on research
+- [x] update `src/core.jl` to add another step that async does the: drains channel and gets the best element (smallest distance) function. 
+- [ ] remove query from configuration. add Embedding(URI) constructor that generates an embedding from a webpage.
 
 
 Scoring fitness can be based on:
