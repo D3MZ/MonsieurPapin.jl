@@ -1,7 +1,7 @@
 using BenchmarkTools
 using Test
 
-struct StubLLM <: MonsieurPapin.AbstractLLM
+struct StubLLM
     output::String
 end
 
