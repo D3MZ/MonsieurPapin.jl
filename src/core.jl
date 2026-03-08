@@ -29,74 +29,58 @@ coarsefilter(config::Configuration) = coarsefilter(config, wets(config))
 
 append!(file, output::AbstractString) = isempty(output) ? file : (write(file, output, "\n"); flush(file); file)
 
-excerpt(pages::Wets, wet::WET, ::Any) = String(content(pages, wet))
-
-function excerpt(pages::Wets, wet::WET, config::Configuration)
+function prompt(pages::Wets, wet::WET, config::Configuration)
     bytes = content(pages, wet)
     stop = min(lastindex(bytes), config.previewlength)
     text = String(@view bytes[firstindex(bytes):stop])
     string("URI: ", String(uri(pages, wet)), "\nSCORE: ", wet.score, "\n\n", text)
 end
 
-process!(file, pages::Wets, client, wet::WET) = append!(file, complete(excerpt(pages, wet, client), client))
+active(channel::Channel{WET}, shortlist::Frontier{WET}, generation) =
+    isopen(channel) || isready(channel) || !isempty(shortlist) || !isnothing(generation)
 
-function process!(file, pages::Wets, client, entries::Frontier{WET})
-    wet = best!(entries)
-    isnothing(wet) ? file : process!(file, pages, client, wet)
-end
-
-function flush!(file, pages::Wets, client, entries::Frontier{WET})
-    while !isempty(entries)
-        process!(file, pages, client, entries)
-    end
-    file
-end
-
-active(channel::Channel{WET}, entries::Frontier{WET}, ::Nothing) = isopen(channel) || isready(channel) || !isempty(entries)
-active(::Channel{WET}, ::Frontier{WET}, ::Task) = true
-
-function consume!(entries::Frontier{WET}, channel::Channel{WET})
+function ingest!(shortlist::Frontier{WET}, channel::Channel{WET})
     while isready(channel)
-        insert!(entries, take!(channel))
+        insert!(shortlist, take!(channel))
     end
-    entries
+    shortlist
 end
 
-function await!(entries::Frontier{WET}, channel::Channel{WET}, ::Nothing)
-    isempty(entries) && wait(channel)
-    entries
+summarize(pages::Wets, config::Configuration, client, wet::WET) =
+    Threads.@spawn complete(prompt(pages, wet, config), client)
+
+persist(generation::Nothing, file) = nothing
+persist(generation::Task, file) = istaskdone(generation) ? (append!(file, fetch(generation)); nothing) : generation
+
+launch(generation::Task, pages::Wets, config::Configuration, client, shortlist::Frontier{WET}) = generation
+launch(generation::Nothing, pages::Wets, config::Configuration, client, shortlist::Frontier{WET}) =
+    isempty(shortlist) ? nothing : summarize(pages, config, client, best!(shortlist))
+
+function idle(channel::Channel{WET}, shortlist::Frontier{WET}, ::Nothing)
+    isempty(shortlist) && isopen(channel) && !isready(channel) && wait(channel)
+    yield()
 end
 
-await!(entries::Frontier{WET}, ::Channel{WET}, ::Task) = entries
-
-start(pages::Wets, client, wet::WET) = Threads.@spawn complete(excerpt(pages, wet, client), client)
-
-function advance(file, pages::Wets, client, entries::Frontier{WET}, ::Nothing)
-    isempty(entries) && return nothing
-    start(pages, client, best!(entries))
+function idle(channel::Channel{WET}, shortlist::Frontier{WET}, generation::Task)
+    isempty(shortlist) && !isopen(channel) && wait(generation)
+    yield()
 end
 
-function advance(file, pages::Wets, client, entries::Frontier{WET}, task::Task)
-    istaskdone(task) || return task
-    append!(file, fetch(task))
-    advance(file, pages, client, entries, nothing)
-end
-
-function drive!(file, pages::Wets, client, entries::Frontier{WET})
-    task = nothing
-    while active(pages.entries, entries, task)
-        await!(entries, pages.entries, task)
-        consume!(entries, pages.entries)
-        task = advance(file, pages, client, entries, task)
-        yield()
+function run!(file, pages::Wets, config::Configuration, client, shortlist::Frontier{WET})
+    generation = nothing
+    while active(pages.entries, shortlist, generation)
+        generation = persist(generation, file)
+        ingest!(shortlist, pages.entries)
+        generation = launch(generation, pages, config, client, shortlist)
+        idle(pages.entries, shortlist, generation)
     end
     file
 end
 
 function report(config::Configuration, pages::Wets, client)
-    entries = frontier(config.capacity, WET)
+    shortlist = frontier(config.capacity, WET)
     open(config.outputpath, "a") do file
-        drive!(file, pages, client, entries)
+        run!(file, pages, config, client, shortlist)
         config.outputpath
     end
 end

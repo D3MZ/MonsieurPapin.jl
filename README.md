@@ -29,6 +29,7 @@ TDD
   - [x] add tests that prove no allocation and expected performance based on research
 - [x] update `src/core.jl` to add another step that async does the: drains channel and gets the best element (smallest distance) function. 
 - [x] add `llm.jl` that processes a string and outputs a string for later writing. it should be generic and have core's configuration pass the params. In core the llm will be part of the queue async thread that drains the channel, and then pops the best (smallest distance) to the LLM so it can write it's output to a file. Setup the configurations in the config to ensure that we're filtering for trading strategies and the llm will be writing to a file the strategies it finds. Add testing and benchmark this with the local file.
+- [ ] Instead of pass fasttext -> channel; drain channel -> queue -> LLM pops from queue. Do pass fast text -> queue; LLM locks and pops from queue, unlocks and does it's processing in loop.
 - [ ] remove query from configuration. add Embedding(URI) constructor that generates an embedding from a webpage.
 
 
