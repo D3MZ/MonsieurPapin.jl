@@ -7,13 +7,17 @@ headers(config::Configuration) =
 
 request(config::Configuration, page::AbstractString) = Dict(
     "model" => config.model,
-    "input" => string(config.systemprompt, "\n\n", config.input, "\n\n", page),
+    "system_prompt" => config.systemprompt,
+    "input" => string(config.input, "\n\n", page),
 )
 
-content(data) = first(filter(entry -> entry["type"] == "message", data["output"]))["content"]
+outputs(data) = get(data, "output", Any[])
+messages(data) = filter(entry -> get(entry, "type", "") == "message", outputs(data))
+text(entry) = get(entry, "content", get(entry, "text", JSON.json(entry)))
+result(data) = isempty(messages(data)) ? "" : text(first(messages(data)))
 
 function complete(page::AbstractString, config::Configuration)
     response = HTTP.post(url(config); headers=headers(config), body=JSON.json(request(config, page)), readtimeout=config.timeoutseconds)
     data = JSON.parse(String(response.body))
-    content(data)
+    result(data)
 end
