@@ -133,19 +133,15 @@ function snippet(text::AbstractString, ::Val{N}) where {N}
     snippet(units, firstindex(units), lastindex(units), Val(N))
 end
 
-text(snippet::Snippet) = text(snippet, snippet.length)
-
-function text(snippet::Snippet{N}, limit::Int) where {N}
-    lengthvalue = min(limit, snippet.length)
-    bytes = Vector{UInt8}(undef, lengthvalue)
+function text(snippet::Snippet)
+    bytes = Vector{UInt8}(undef, snippet.length)
     tuple = Ref(snippet.bytes)
-    GC.@preserve tuple bytes unsafe_copyto!(pointer(bytes), Base.unsafe_convert(Ptr{UInt8}, tuple), lengthvalue)
+    GC.@preserve tuple bytes unsafe_copyto!(pointer(bytes), Base.unsafe_convert(Ptr{UInt8}, tuple), snippet.length)
     String(bytes)
 end
 
 uri(wet::WET) = text(wet.uri)
 content(wet::WET) = text(wet.content)
-content(wet::WET, limit::Int) = text(wet.content, limit)
 
 function discard(stream, buffer, count)
     remaining = count
