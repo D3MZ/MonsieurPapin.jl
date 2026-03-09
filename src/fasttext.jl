@@ -1,5 +1,4 @@
 struct FastText
-    path::String
     width::Int
     vectors::Dict{String,Vector{Float32}}
 end
@@ -33,7 +32,7 @@ function load(path::AbstractString)
             vectors[token] = parse.(Float32, row[2:end])
         end
 
-        FastText(String(path), width, vectors)
+        FastText(width, vectors)
     end
 end
 
@@ -48,7 +47,6 @@ function embedding(text::AbstractString, model::FastText)
     Embedding(model, values)
 end
 
-embedding(text::AbstractVector{UInt8}, model::FastText) = embedding(String(text), model)
 embedding(text::AbstractString; vecpath="data/wiki-news-300d-1M.vec") = embedding(text, fasttext(vecpath))
 
 function similarity(firstembedding::Embedding, secondembedding::Embedding)
@@ -68,10 +66,6 @@ function isrelevant(firstembedding::Embedding, secondembedding::Embedding; thres
 end
 
 function isrelevant(firstembedding::Embedding, text::AbstractString; threshold=0.6)
-    isrelevant(firstembedding, embedding(text, firstembedding.source); threshold)
-end
-
-function isrelevant(firstembedding::Embedding, text::AbstractVector{UInt8}; threshold=0.6)
     isrelevant(firstembedding, embedding(text, firstembedding.source); threshold)
 end
 
