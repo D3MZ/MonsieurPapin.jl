@@ -11,7 +11,7 @@ end
 
 const fasttexts = Dict{String,FastText}()
 
-tokenize(text::AbstractString) = [String(match.match) for match in eachmatch(r"[[:word:]]+", lowercase(text))]
+tokenize(text::AbstractString) = split(text)
 
 resolve(path::AbstractString) = isfile(path) ? path : joinpath(dirname(@__DIR__), path)
 
@@ -61,10 +61,7 @@ function similarity(string1::AbstractString, string2::AbstractString, model::Fas
 end
 
 distance(firstembedding::Embedding, secondembedding::Embedding) = 1.0 - similarity(firstembedding, secondembedding)
-
-function distance(source::Embedding, pages::Wets, wet::WET)
-    distance(source, embedding(content(pages, wet), source.source))
-end
+distance(source::Embedding, wet::WET) = distance(source, embedding(content(wet), source.source))
 
 function isrelevant(firstembedding::Embedding, secondembedding::Embedding; threshold=0.6)
     similarity(firstembedding, secondembedding) >= threshold
@@ -82,20 +79,17 @@ function isrelevant(text::AbstractString, secondembedding::Embedding; threshold=
     isrelevant(secondembedding, text; threshold)
 end
 
-function isrelevant(source::Embedding, pages::Wets, wet::WET; threshold=0.6)
-    isrelevant(source, content(pages, wet); threshold)
-end
+isrelevant(source::Embedding, wet::WET; threshold=0.6) = isrelevant(source, content(wet); threshold)
 
-score(source::Embedding, pages::Wets, wet::WET) = scored(wet, distance(source, pages, wet))
+score(source::Embedding, wet::WET) = scored(wet, distance(source, wet))
 
-function relevant!(source::Embedding, pages::Wets; capacity=10, threshold=0.6)
-    entries = Channel{WET}(capacity) do filtered
-        Threads.foreach(pages.entries) do wet
-            candidate = score(source, pages, wet)
+function relevant!(source::Embedding, pages::Channel{T}; capacity=10, threshold=0.6) where {T<:WET}
+    Channel{T}(capacity) do filtered
+        Threads.foreach(pages) do wet
+            candidate = score(source, wet)
             candidate.score <= 1.0 - threshold && put!(filtered, candidate)
         end
     end
-    Wets(entries, pages.buffers)
 end
 
 function isrelevant(string1::AbstractString, string2::AbstractString; threshold=0.6, vecpath="data/wiki-news-300d-1M.vec")

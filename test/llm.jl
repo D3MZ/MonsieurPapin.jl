@@ -1,4 +1,6 @@
 using BenchmarkTools
+using Dates
+using MonsieurPapin
 using Test
 
 struct StubLLM
@@ -7,16 +9,18 @@ end
 
 MonsieurPapin.complete(::AbstractString, llm::StubLLM) = llm.output
 
-warcrecord(content; language="en", uri="https://example.com") =
-    "WARC/1.0\r\n" *
-    "WARC-Type: conversion\r\n" *
-    "WARC-Target-URI: $uri\r\n" *
-    "WARC-Date: 2026-03-03T00:00:00Z\r\n" *
-    "WARC-Identified-Content-Language: $language\r\n" *
-    "Content-Length: $(ncodeunits(content))\r\n\r\n" *
-    content
+page(text, score=0.0) = WET(
+    MonsieurPapin.snippet("https://example.com", Val(32)),
+    MonsieurPapin.snippet(text, Val(32)),
+    DateTime(2026, 3, 3),
+    ncodeunits(text),
+    score,
+)
 
-sample() = MonsieurPapin.wets(Vector{UInt8}(codeunits(warcrecord("kitten dog") * warcrecord("banana"))); capacity=2)
+sample() = Channel{typeof(page("kitten dog"))}(2) do channel
+    put!(channel, page("kitten dog", 0.1))
+    put!(channel, page("banana", 0.9))
+end
 
 @testset "llm" begin
     stub = StubLLM("```text\nstrategy\n```\n")
@@ -24,8 +28,7 @@ sample() = MonsieurPapin.wets(Vector{UInt8}(codeunits(warcrecord("kitten dog") *
 
     outputpath = tempname()
     config = Configuration(; outputpath, capacity=2)
-    filtered = relevant!(embedding("cat dog"; vecpath="test/data/fasttext.vec"), sample(); threshold=0.0)
-    @test MonsieurPapin.report(config, filtered, stub) == outputpath
+    @test MonsieurPapin.report(config, sample(), stub) == outputpath
     @test occursin("strategy", read(outputpath, String))
 
     if get(ENV, "MONSIEURPAPIN_BENCHMARK", "false") == "true"

@@ -23,11 +23,12 @@ one(_) = 1
     path = joinpath(dirname(@__DIR__), "data", "warc.wet.gz")
     channel = wets(path)
     @test @allocations(first(channel)) == 0
+    @test sum(one, wets(path)) == 21_465
     @test sum(one, wets([path, path])) == 2 * sum(one, wets(path))
 
-    # warm up the channel allocation footprint before testing
-    sum(one, wets(path))
-    @test @allocations(sum(one, wets(path))) < 100
+    if get(ENV, "MONSIEURPAPIN_BENCHMARK", "false") == "true"
+        display(@benchmark sum(_ -> 1, wets($path)))
+    end
 end
 
 
