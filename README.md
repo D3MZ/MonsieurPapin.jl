@@ -10,27 +10,16 @@
 Not your ordinary digester: Search the entire internet summarize into a "research grade" markdown file entirely on your computer in a day or your money back!
 
 ## TODO
-TDD
-- [x] wetURIs(::URI | ::AbstractString) -> Channel{URI}(threadcount)
-- [x] wets(::URI | ::AbstractString) -> Channel{WET}(threadcount)
-- [ ] Reduce allocs: 1,783,247 allocs on 21,321 records. Each record could be read into a large buffer that's reused every time.
-- [x] Add isrelevant(string1, string2; threshold=0.6, vecpath="data/wiki-news-300d-1M.vec") function in `src/fasttext.jl`, and test.
-  - [ ] do research on quantize, subword, etc.
-- [x] turn embedding into a type, and dispatch on isrelevant(embedding, string), add test.
-- [x] add embedding(string) constructor.
-- [x] gettext(URI)::String. This downloads a webpage and gets the text from it. live test on example.
-- [x] replace config.json with a struct in `core.jl`, update and simplify references
-- [x] dispatch isrelevant(source::Embedding, wet::WET)
-- [x] relevant(source::Embedding, wets::Channel{WET})
-- [x] update WET struct to include score::Float, rename relevant to relevant!, have it update score based on distance.
-- [x] in `src/queue.jl` binary heap queues that maintain a certain size.
-  - [x] drains channel into queue maintaining a certain size (check before insert)
-  - [x] drains channel and gets the best element (smallest distance)
-  - [x] add tests that prove no allocation and expected performance based on research
-- [x] update `src/core.jl` to add another step that async does the: drains channel and gets the best element (smallest distance) function. 
-- [x] add `llm.jl` that processes a string and outputs a string for later writing. it should be generic and have core's configuration pass the params. In core the llm will be part of the queue async thread that drains the channel, and then pops the best (smallest distance) to the LLM so it can write it's output to a file. Setup the configurations in the config to ensure that we're filtering for trading strategies and the llm will be writing to a file the strategies it finds. Add testing and benchmark this with the local file.
 - [ ] Fasttext to work on bytes to remove string allocations from the read. Quantize fast text 
 - [ ] Fix fasttext `tokenize` method as it's creating words that contain punctuation which will be out of vocab.
+- [ ] Optimize `read!` in `src/wets.jl` to use block-based I/O (`readuntil!`) with pre-allocated buffers instead of byte-by-byte reading.
+- [ ] `test/benchmarks.jl` measures performance for each stage that uses the test files.
+  - [ ] wetURIs - how fast we're able to put URI structs into a channel and take from them.
+  - [ ] wets - how fast we're able to put WET structs into a channel and take from them.
+  - [ ] fasttext - similarity and distance calculation throughput (Pulls from WET channel, pushes into another channel)
+  - [ ] relevant! - filtering performance and allocation count under load.
+  - [ ] queue - ingestion and `best!` extraction speed of the `Frontier`.
+  - [ ] llm - prompt construction overhead and end-to-end processing latency.
 - [ ] remove query from configuration. add Embedding(URI) constructor that generates an embedding from a webpage.
 
 
