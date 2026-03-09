@@ -26,8 +26,3 @@ function best(source; capacity=10)
     drain!(entries, source)
     best!(entries)
 end
-
-function best(pages::Wets; capacity=10)
-    item = best(pages.entries; capacity)
-    isnothing(item) ? nothing : (pages=pages, wet=item)
-end
