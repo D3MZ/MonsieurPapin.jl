@@ -1,45 +1,25 @@
-struct Segment
-    start::Int
-    stop::Int
+struct Snippet{N}
+    bytes::NTuple{N,UInt8}
+    length::Int
 end
 
-struct WET
-    source::Int
-    uri::Segment
-    language::Segment
-    content::Segment
+struct WET{U,C}
+    uri::Snippet{U}
+    content::Snippet{C}
     date::DateTime
     length::Int
     score::Float64
 end
 
-struct Wets
-    entries::Channel{WET}
-    buffers::Vector{Vector{UInt8}}
-end
-
-Base.iterate(pages::Wets, state...) = iterate(pages.entries, state...)
-Base.eltype(::Type{Wets}) = WET
-Base.IteratorSize(::Type{Wets}) = Base.SizeUnknown()
+const urilimit = 4096
+const contentlimit = 12000
 
 const warcprefix = codeunits("WARC/1.0")
 const typeprefix = codeunits("WARC-Type:")
 const conversion = codeunits("conversion")
 const uriprefix = codeunits("WARC-Target-URI:")
 const dateprefix = codeunits("WARC-Date:")
-const languageprefix = codeunits("WARC-Identified-Content-Language:")
 const lengthprefix = codeunits("Content-Length:")
-const headerseparator = codeunits("\r\n\r\n")
-
-loadbuffer(path::AbstractString) = open(path) do file
-    read(GzipDecompressorStream(file))
-end
-
-loadbuffer(index::URI) = HTTP.open("GET", string(index)) do stream
-    HTTP.startread(stream)
-    read(GzipDecompressorStream(BufferedInputStream(stream)))
-end
-
 function matches(bytes, start, prefix)
     stop = start + length(prefix) - 1
     stop <= lastindex(bytes) || return false
@@ -49,38 +29,12 @@ function matches(bytes, start, prefix)
     true
 end
 
-function findheader(bytes, start)
-    limit = lastindex(bytes) - length(warcprefix) + 1
-    index = start
-    while index <= limit
-        matches(bytes, index, warcprefix) && return index
-        index += 1
-    end
-end
-
-function findseparator(bytes, start)
-    limit = lastindex(bytes) - length(headerseparator) + 1
-    index = start
-    while index <= limit
-        matches(bytes, index, headerseparator) && return index
-        index += 1
-    end
-end
-
-function findlineend(bytes, start, stop)
-    index = start
-    while index <= stop && bytes[index] != 0x0a
-        index += 1
-    end
-    index
-end
-
 function trim(bytes, start, stop)
     while start <= stop && (bytes[start] == 0x20 || bytes[start] == 0x09)
         start += 1
     end
     bytes[stop] == 0x0d && (stop -= 1)
-    Segment(start, stop)
+    start:stop
 end
 
 function linevalue(bytes, start, stop, prefix)
@@ -88,20 +42,18 @@ function linevalue(bytes, start, stop, prefix)
     trim(bytes, start + length(prefix), stop)
 end
 
-Base.length(segment::Segment) = segment.stop - segment.start + 1
-
 digit(byte) = Int(byte - 0x30)
 
 function parseint(bytes, bounds)
     value = 0
-    for index in bounds.start:bounds.stop
+    for index in bounds
         value = 10 * value + digit(bytes[index])
     end
     value
 end
 
 function parsedatetime(bytes, bounds)
-    start = bounds.start
+    start = first(bounds)
     DateTime(
         1000 * digit(bytes[start]) + 100 * digit(bytes[start + 1]) + 10 * digit(bytes[start + 2]) + digit(bytes[start + 3]),
         10 * digit(bytes[start + 5]) + digit(bytes[start + 6]),
@@ -115,104 +67,171 @@ end
 function isconversion(bytes, start, stop)
     value = linevalue(bytes, start, stop, typeprefix)
     isnothing(value) && return false
-    length(value) == Base.length(conversion) && matches(bytes, value.start, conversion)
+    length(value) == length(conversion) && matches(bytes, first(value), conversion)
 end
 
-field(value, bytes, start, stop, prefix) = isnothing(value) ? linevalue(bytes, start, stop, prefix) : value
+function stop(bytes)
+    index = lastindex(bytes)
+    index >= firstindex(bytes) && bytes[index] == 0x0a && (index -= 1)
+    index >= firstindex(bytes) && bytes[index] == 0x0d && (index -= 1)
+    index
+end
 
-function contentlength(value, bytes, start, stop)
+blank(bytes) = stop(bytes) < firstindex(bytes)
+
+function read!(bytes, stream)
+    resize!(bytes, 0)
+    while !eof(stream)
+        push!(bytes, read(stream, UInt8))
+        bytes[lastindex(bytes)] == 0x0a && return bytes
+    end
+    isempty(bytes) ? nothing : bytes
+end
+
+type(bytes) = blank(bytes) ? false : isconversion(bytes, firstindex(bytes), stop(bytes))
+
+function uri(value, bytes)
+    !isnothing(value) && return value
+    blank(bytes) && return nothing
+    bounds = linevalue(bytes, firstindex(bytes), stop(bytes), uriprefix)
+    isnothing(bounds) ? nothing : snippet(bytes, first(bounds), last(bounds), Val(urilimit))
+end
+
+function date(value, bytes)
+    !isnothing(value) && return value
+    blank(bytes) && return nothing
+    bounds = linevalue(bytes, firstindex(bytes), stop(bytes), dateprefix)
+    isnothing(bounds) ? nothing : parsedatetime(bytes, bounds)
+end
+
+function size(value, line)
     value != 0 && return value
-    bounds = linevalue(bytes, start, stop, lengthprefix)
-    isnothing(bounds) ? 0 : parseint(bytes, bounds)
+    blank(line) && return 0
+    bounds = linevalue(line, firstindex(line), stop(line), lengthprefix)
+    isnothing(bounds) ? 0 : parseint(line, bounds)
 end
 
-function fields(bytes, headerstart, headerstop)
+keep(kind, uri, date, lengthvalue) = kind && !isnothing(uri) && !isnothing(date) && lengthvalue != 0
+spanlength(start, stop) = max(stop - start + 1, 0)
+limit(stop, start, capacity) = min(capacity, spanlength(start, stop))
+
+function copybytes(bytes, start, lengthvalue, ::Val{N}) where {N}
+    tuple = Ref{NTuple{N,UInt8}}()
+    pointervalue = Base.unsafe_convert(Ptr{UInt8}, tuple)
+    ccall(:memset, Ptr{Cvoid}, (Ptr{Cvoid}, Cint, Csize_t), pointervalue, 0, N)
+    GC.@preserve bytes tuple unsafe_copyto!(pointervalue, pointer(bytes, start), lengthvalue)
+    tuple[]
+end
+
+function snippet(bytes, start, stop, ::Val{N}) where {N}
+    lengthvalue = limit(stop, start, N)
+    Snippet(copybytes(bytes, start, lengthvalue, Val(N)), lengthvalue)
+end
+
+function snippet(text::AbstractString, ::Val{N}) where {N}
+    units = codeunits(text)
+    snippet(units, firstindex(units), lastindex(units), Val(N))
+end
+
+text(snippet::Snippet) = text(snippet, snippet.length)
+
+function text(snippet::Snippet{N}, limit::Int) where {N}
+    lengthvalue = min(limit, snippet.length)
+    bytes = Vector{UInt8}(undef, lengthvalue)
+    tuple = Ref(snippet.bytes)
+    GC.@preserve tuple bytes unsafe_copyto!(pointer(bytes), Base.unsafe_convert(Ptr{UInt8}, tuple), lengthvalue)
+    String(bytes)
+end
+
+uri(wet::WET) = text(wet.uri)
+content(wet::WET) = text(wet.content)
+content(wet::WET, limit::Int) = text(wet.content, limit)
+
+function discard(stream, buffer, count)
+    remaining = count
+    while remaining > 0
+        width = min(remaining, length(buffer))
+        readbytes!(stream, buffer, width) == width || return nothing
+        remaining -= width
+    end
+    stream
+end
+
+function header(line, stream)
     kind = false
-    uri = nothing
-    date = nothing
-    language = nothing
-    lengthvalue = 0
-    index = headerstart
+    address = nothing
+    moment = nothing
+    bytes = 0
 
-    while index <= headerstop
-        lineend = findlineend(bytes, index, headerstop)
-        stop = min(headerstop, lineend - 1)
-        kind = kind ? true : isconversion(bytes, index, stop)
-        uri = field(uri, bytes, index, stop, uriprefix)
-        date = field(date, bytes, index, stop, dateprefix)
-        language = field(language, bytes, index, stop, languageprefix)
-        lengthvalue = contentlength(lengthvalue, bytes, index, stop)
-        index = lineend + 1
+    while !blank(line)
+        kind = kind ? true : type(line)
+        address = uri(address, line)
+        moment = date(moment, line)
+        bytes = size(bytes, line)
+        next = read!(line, stream)
+        isnothing(next) && return nothing
+        line = next
     end
 
-    (kind, uri, date, language, lengthvalue)
+    (kind, address, moment, bytes)
 end
 
-function bounds(bytes, start)
-    headerstart = findheader(bytes, start)
-    isnothing(headerstart) && return nothing
-    separator = findseparator(bytes, headerstart)
-    isnothing(separator) && return nothing
-    (headerstart = headerstart, headerstop = separator - 1, contentstart = separator + 4)
+function body(address, moment, bytes, buffer, stream)
+    kept = min(bytes, contentlimit)
+    readbytes!(stream, buffer, kept) == kept || return nothing
+    bytes > kept && discard(stream, buffer, bytes - kept)
+    WET(address, snippet(buffer, firstindex(buffer), kept, Val(contentlimit)), moment, bytes, Inf)
 end
 
-keep(kind, uri, date, language, lengthvalue) =
-    kind && !isnothing(uri) && !isnothing(date) && !isnothing(language) && lengthvalue != 0
-
-function parsedwet(bytes, source, uri, date, language, lengthvalue, contentstart)
-    contentstop = min(lastindex(bytes), contentstart + lengthvalue - 1)
-    WET(source, uri, language, Segment(contentstart, contentstop), parsedatetime(bytes, date), lengthvalue, Inf), contentstop + 1
+function record(line, buffer, stream)
+    entry = header(line, stream)
+    isnothing(entry) && return nothing
+    kind, address, moment, bytes = entry
+    keep(kind, address, moment, bytes) || return (discard(stream, buffer, bytes); nothing)
+    body(address, moment, bytes, buffer, stream)
 end
 
-function parsed(bytes, start, source)
-    range = bounds(bytes, start)
-    isnothing(range) && return nothing
-    kind, uri, date, language, lengthvalue = fields(bytes, range.headerstart, range.headerstop)
-    keep(kind, uri, date, language, lengthvalue) || return (wet = nothing, next = range.contentstart + max(lengthvalue, 1))
-    wet, next = parsedwet(bytes, source, uri, date, language, lengthvalue, range.contentstart)
-    (wet = wet, next = next)
-end
+function emit(channel, stream::IO)
+    line = Vector{UInt8}(undef, 0)
+    sizehint!(line, 256)
+    body = Vector{UInt8}(undef, contentlimit)
 
-function emit(channel, bytes, source)
-    index = firstindex(bytes)
     while true
-        entry = parsed(bytes, index, source)
-        isnothing(entry) && return channel
-        isnothing(entry.wet) || put!(channel, entry.wet)
-        index = entry.next
+        next = read!(line, stream)
+        isnothing(next) && return channel
+        matches(line, firstindex(line), warcprefix) || continue
+        entry = record(line, body, stream)
+        isnothing(entry) || put!(channel, entry)
     end
 end
 
-function wets(buffers::Vector{Vector{UInt8}}; capacity=10)
-    entries = Channel{WET}(capacity) do channel
-        foreach(enumerate(buffers)) do entry
-            emit(channel, last(entry), first(entry))
+function wets(path::AbstractString; capacity=10)
+    Channel{WET{urilimit,contentlimit}}(capacity) do channel
+        open(path) do file
+            emit(channel, BufferedInputStream(GzipDecompressorStream(file)))
         end
     end
-    Wets(entries, buffers)
 end
 
-function streamwets(paths; capacity=10)
-    buffers = Vector{Vector{UInt8}}()
-    entries = Channel{WET}(capacity) do channel
-        foreach(paths) do path
-            buffer = loadbuffer(path)
-            push!(buffers, buffer)
-            emit(channel, buffer, length(buffers))
+function wets(index::URI; capacity=10)
+    Channel{WET{urilimit,contentlimit}}(capacity) do channel
+        HTTP.open("GET", string(index)) do stream
+            HTTP.startread(stream)
+            emit(channel, GzipDecompressorStream(BufferedInputStream(stream)))
         end
     end
-    Wets(entries, buffers)
 end
 
-wets(bytes::Vector{UInt8}; capacity=10) = wets([bytes]; capacity)
-wets(path::AbstractString; capacity=10) = wets(loadbuffer(path); capacity)
-wets(index::URI; capacity=10) = wets(loadbuffer(index); capacity)
-wets(paths::AbstractVector{<:Union{AbstractString,URI}}; capacity=10) = streamwets(paths; capacity)
-wets(paths::Channel{URI}; capacity=10) = streamwets(paths; capacity)
+function wets(paths::AbstractVector{<:Union{AbstractString,URI}}; capacity=10)
+    Channel{WET{urilimit,contentlimit}}(capacity) do channel
+        foreach(path -> foreach(wet -> put!(channel, wet), wets(path; capacity)), paths)
+    end
+end
 
-bytes(pages::Wets, wet::WET) = pages.buffers[wet.source]
-span(pages::Wets, wet::WET, segment::Segment) = @view bytes(pages, wet)[segment.start:segment.stop]
-uri(pages::Wets, wet::WET) = span(pages, wet, wet.uri)
-language(pages::Wets, wet::WET) = span(pages, wet, wet.language)
-content(pages::Wets, wet::WET) = span(pages, wet, wet.content)
-scored(wet::WET, value) = WET(wet.source, wet.uri, wet.language, wet.content, wet.date, wet.length, value)
+function wets(paths::Channel{URI}; capacity=10)
+    Channel{WET{urilimit,contentlimit}}(capacity) do channel
+        foreach(path -> foreach(wet -> put!(channel, wet), wets(path; capacity)), paths)
+    end
+end
+
+scored(wet::WET, value) = WET(wet.uri, wet.content, wet.date, wet.length, value)

@@ -4,8 +4,6 @@ Base.@kwdef struct Configuration
     capacity::Int = 10
     threshold::Float64 = 0.6
     vecpath::String = "data/wiki-news-300d-1M.vec"
-    previewseconds::Float64 = 8.0
-    previewlength::Int = 12000
     query::String = "It doesn’t really matter which component you find first, the price action signal or the level. What matters is if the two have come together to form a confluent price action trade. When you have an obvious price action signal, like a pin bar or a fakey signal, and that signal has formed at a key horizontal level of support or resistance in a market, you have a potentially very high-probability trade on your hands."
     baseurl::String = "http://localhost:1234"
     path::String = "/api/v1/chat"
@@ -17,76 +15,67 @@ Base.@kwdef struct Configuration
     timeoutseconds::Int = 120
 end
 
-source(config::Configuration) = embedding(config.query; vecpath=config.vecpath)
 weturis(config::Configuration) = wetURIs(config.crawlpath; capacity=config.capacity, wetroot=config.crawlroot)
 wets(config::Configuration) = wets(weturis(config); capacity=config.capacity)
 
-function coarsefilter(config::Configuration, entries::Wets)
-    relevant!(source(config), entries; capacity=config.capacity, threshold=config.threshold)
+function coarsefilter(config::Configuration, entries::Channel{T}) where {T<:WET}
+    relevant!(embedding(config.query; vecpath=config.vecpath), entries; capacity=config.capacity, threshold=config.threshold)
 end
-
-coarsefilter(config::Configuration) = coarsefilter(config, wets(config))
 
 append!(file, output::AbstractString) = isempty(output) ? file : (write(file, output, "\n"); flush(file); file)
 
-function prompt(pages::Wets, wet::WET, config::Configuration)
-    bytes = content(pages, wet)
-    stop = min(lastindex(bytes), config.previewlength)
-    text = String(@view bytes[firstindex(bytes):stop])
-    string("URI: ", String(uri(pages, wet)), "\nSCORE: ", wet.score, "\n\n", text)
-end
+prompt(wet::WET, config::Configuration) = string("URI: ", uri(wet), "\nSCORE: ", wet.score, "\n\n", content(wet))
 
-active(channel::Channel{WET}, shortlist::Frontier{WET}, generation) =
+active(channel::Channel{T}, shortlist::Frontier{T}, generation) where {T<:WET} =
     isopen(channel) || isready(channel) || !isempty(shortlist) || !isnothing(generation)
 
-function ingest!(shortlist::Frontier{WET}, channel::Channel{WET})
+function ingest!(shortlist::Frontier{T}, channel::Channel{T}) where {T<:WET}
     while isready(channel)
         insert!(shortlist, take!(channel))
     end
     shortlist
 end
 
-summarize(pages::Wets, config::Configuration, client, wet::WET) =
-    Threads.@spawn complete(prompt(pages, wet, config), client)
+summarize(config::Configuration, client, wet::WET) = Threads.@spawn complete(prompt(wet, config), client)
 
 persist(generation::Nothing, file) = nothing
 persist(generation::Task, file) = istaskdone(generation) ? (append!(file, fetch(generation)); nothing) : generation
 
-launch(generation::Task, pages::Wets, config::Configuration, client, shortlist::Frontier{WET}) = generation
-launch(generation::Nothing, pages::Wets, config::Configuration, client, shortlist::Frontier{WET}) =
-    isempty(shortlist) ? nothing : summarize(pages, config, client, best!(shortlist))
+launch(generation::Task, config::Configuration, client, shortlist::Frontier{T}) where {T<:WET} = generation
+launch(generation::Nothing, config::Configuration, client, shortlist::Frontier{T}) where {T<:WET} =
+    isempty(shortlist) ? nothing : summarize(config, client, best!(shortlist))
 
-function idle(channel::Channel{WET}, shortlist::Frontier{WET}, ::Nothing)
+function idle(channel::Channel{T}, shortlist::Frontier{T}, ::Nothing) where {T<:WET}
     isempty(shortlist) && isopen(channel) && !isready(channel) && wait(channel)
     yield()
 end
 
-function idle(channel::Channel{WET}, shortlist::Frontier{WET}, generation::Task)
+function idle(channel::Channel{T}, shortlist::Frontier{T}, generation::Task) where {T<:WET}
     isempty(shortlist) && !isopen(channel) && wait(generation)
     yield()
 end
 
-function run!(file, pages::Wets, config::Configuration, client, shortlist::Frontier{WET})
+function run!(file, entries::Channel{T}, config::Configuration, client, shortlist::Frontier{T}) where {T<:WET}
     generation = nothing
-    while active(pages.entries, shortlist, generation)
+    while active(entries, shortlist, generation)
         generation = persist(generation, file)
-        ingest!(shortlist, pages.entries)
-        generation = launch(generation, pages, config, client, shortlist)
-        idle(pages.entries, shortlist, generation)
+        ingest!(shortlist, entries)
+        generation = launch(generation, config, client, shortlist)
+        idle(entries, shortlist, generation)
     end
     file
 end
 
-function report(config::Configuration, pages::Wets, client)
-    shortlist = frontier(config.capacity, WET)
+function report(config::Configuration, entries::Channel{T}, client) where {T<:WET}
+    shortlist = frontier(config.capacity, eltype(entries))
     open(config.outputpath, "a") do file
-        run!(file, pages, config, client, shortlist)
+        run!(file, entries, config, client, shortlist)
         config.outputpath
     end
 end
 
-report(config::Configuration, pages::Wets) = report(config, pages, config)
-queue(config::Configuration, entries::Wets) = Threads.@spawn report(config, entries)
+report(config::Configuration, entries::Channel{T}) where {T<:WET} = report(config, entries, config)
+queue(config::Configuration, entries::Channel{T}) where {T<:WET} = Threads.@spawn report(config, entries)
 
 function research(config::Configuration)
     entries = wets(config)
