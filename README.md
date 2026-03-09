@@ -14,8 +14,8 @@ Not your ordinary digester: Search the entire internet summarize into a "researc
 - [ ] Fix fasttext `tokenize` method as it's creating words that contain punctuation which will be out of vocab.
 - [ ] Optimize `read!` in `src/wets.jl` to use block-based I/O (`readuntil!`) with pre-allocated buffers instead of byte-by-byte reading.
 - [ ] `test/benchmarks.jl` measures performance for each stage that uses the test files.
-  - [ ] wetURIs - how fast we're able to put URI structs into a channel and take from them.
-  - [ ] wets - how fast we're able to put WET structs into a channel and take from them.
+  - [x] wetURIs - how fast we're able to put URI structs into a channel and take from them.
+  - [x] wets - how fast we're able to put WET structs into a channel and take from them.
   - [ ] fasttext - similarity and distance calculation throughput (Pulls from WET channel, pushes into another channel)
   - [ ] relevant! - filtering performance and allocation count under load.
   - [ ] queue - ingestion and `best!` extraction speed of the `Frontier`.
