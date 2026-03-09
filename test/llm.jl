@@ -10,8 +10,8 @@ end
 MonsieurPapin.complete(::AbstractString, llm::StubLLM) = llm.output
 
 page(text, score=0.0) = WET(
-    MonsieurPapin.snippet("https://example.com", Val(32)),
-    MonsieurPapin.snippet(text, Val(32)),
+    MonsieurPapin.Snippet("https://example.com", Val(32)),
+    MonsieurPapin.Snippet(text, Val(32)),
     DateTime(2026, 3, 3),
     ncodeunits(text),
     score,
