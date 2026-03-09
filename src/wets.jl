@@ -54,7 +54,7 @@ content(wet::WET, limit::Int) = text(wet.content, limit)
 function wets(path::AbstractString; capacity=10)
     Channel{WET{urilimit,contentlimit}}(capacity) do channel
         open(path) do file
-            emit(channel, BufferedInputStream(GzipDecompressorStream(file)))
+            emit(channel, GzipDecompressorStream(file))
         end
     end
 end
