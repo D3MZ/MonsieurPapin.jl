@@ -2,11 +2,6 @@
 # How do `eachline` allocations scale with line count for raw IO and gunzip IO?
 #
 # Results
-# Reading URLs from an `IOBuffer` with `eachline` is not allocation-free because each yielded line is a `String`.
-# Only the gunzip read path is benchmarked here; compression is setup to build the input bytes.
-# With random-length URL paths, the raw path settles near 5 allocations per line, while the gunzip path carries extra
-# decompressor work that grows with the compressed payload size.
-# The benchmark scales include the current URL count from `data/wet.paths.gz`, which is 100000 as of March 9, 2026.
 # +----------------------+--------+-----------+-----------+------------+
 # | metric               | 1K raw | 1K gunzip | 100K raw  | 100K gunzip|
 # +----------------------+--------+-----------+-----------+------------+
@@ -17,6 +12,7 @@
 # | overhead allocs/line | 0.0    | 1.122     | 0.0       | 1.19788    |
 # | overhead bytes/line  | 0.0    | 87.408    | 0.0       | 20.35456   |
 # +----------------------+--------+-----------+-----------+------------+
+# commoncrawl wet uri paths to compressed zips of streamed wet pages is 100K via `data/wet.paths.gz`.
 
 using BenchmarkTools, CodecZlib, Logging, Random, Statistics
 

@@ -4,25 +4,28 @@
 # Performance differences on per-put and per-take for isbits and nonisbits types?
 
 # Results
+# Channel{T=Any}(sz::Int=0)
+# Create a Channel with an internal buffer capable of storing up to sz objects.
+# Channel(0) constructs an unbuffered channel. put! on an unbuffered channel blocks until a matching take! is called, and take! blocks until a matching put! occurs.
 # Buffered primitive cases were flat across thread count, occupancy, and payload choice.
 # Typed channels remove the buffered Payload boxing allocation, but Channel(0) still pays
 # rendezvous cost and the Payload case still allocates on the unbuffered path.
-# +------------+------------------+-----------+--------+-------+
-# | payload    | case             | median    | allocs | bytes |
-# +------------+------------------+-----------+--------+-------+
-# | isbits     | buffered put!    | 41.000 ns | 0      | 0     |
-# | isbits     | buffered take!   | 41.000 ns | 0      | 0     |
-# | isbits     | channel0 put!    | 15.792 us | 0      | 0     |
-# | isbits     | channel0 take!   | 29.584 us | 0      | 0     |
-# | nonisbits  | buffered put!    | 42.000 ns | 0      | 0     |
-# | nonisbits  | buffered take!   | 42.000 ns | 0      | 0     |
-# | nonisbits  | channel0 put!    | 15.833 us | 0      | 0     |
-# | nonisbits  | channel0 take!   | 29.125 us | 0      | 0     |
-# | payload    | buffered put!    | 42.000 ns | 0      | 0     |
-# | payload    | buffered take!   | 42.000 ns | 0      | 0     |
-# | payload    | channel0 put!    | 105.417 us| 1      | 32    |
-# | payload    | channel0 take!   | 118.375 us| 1      | 32    |
-# +------------+------------------+-----------+--------+-------+
+# +------------+----------------------+------------+--------+-------+
+# | payload    | case                 | median     | allocs | bytes |
+# +------------+----------------------+------------+--------+-------+
+# | isbits     | channel(n) put!      |   41.000 ns|      0 |     0 |
+# | isbits     | channel(n) take!     |   41.000 ns|      0 |     0 |
+# | isbits     | channel(0) put!      |   15.792 μs|      0 |     0 |
+# | isbits     | channel(0) take!     |   29.584 μs|      0 |     0 |
+# | nonisbits  | channel(n) put!      |   42.000 ns|      0 |     0 |
+# | nonisbits  | channel(n) take!     |   42.000 ns|      0 |     0 |
+# | nonisbits  | channel(0) put!      |   15.833 μs|      0 |     0 |
+# | nonisbits  | channel(0) take!     |   29.125 μs|      0 |     0 |
+# | payload    | channel(n) put!      |   42.000 ns|      0 |     0 |
+# | payload    | channel(n) take!     |   42.000 ns|      0 |     0 |
+# | payload    | channel(0) put!      |  105.417 μs|      1 |    32 |
+# | payload    | channel(0) take!     |  118.375 μs|      1 |    32 |
+# +------------+----------------------+------------+--------+-------+
 
 using BenchmarkTools, Logging
 
