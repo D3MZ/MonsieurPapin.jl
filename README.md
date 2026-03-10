@@ -10,7 +10,8 @@
 Not your ordinary digester: Search the entire internet summarize into a "research grade" markdown file entirely on your computer in a day or your money back!
 
 ## TODO
-- [ ] in `wetURIs` preallocate the bytes use StringViews.jl to read that byte buffer whenever needed.
+- [x] 2x reduction in allocs: in `wetURIs` preallocate the bytes use StringViews.jl to read that byte buffer whenever needed.
+- [ ]
 - [ ] Fasttext to work on bytes to remove string allocations from the read. Quantize fast text 
 - [ ] Fix fasttext `tokenize` method as it's creating words that contain punctuation which will be out of vocab.
 - [ ] Optimize `read!` in `src/wets.jl` to use block-based I/O (`readuntil!`) with pre-allocated buffers instead of byte-by-byte reading.
