@@ -1,6 +1,6 @@
 module MonsieurPapin
 
-using HTTP, CodecZlib, BufferedStreams, Dates, LinearAlgebra, DataStructures, JSON
+using HTTP, CodecZlib, BufferedStreams, Dates, LinearAlgebra, DataStructures, JSON, StringViews
 using HTTP: URI
 
 export WET, wetURIs, wets, Configuration, Embedding, embedding, complete, gettext, isrelevant, relevant!, frontier, drain!, best!, best, research
