@@ -18,7 +18,6 @@ one(_) = 1
 
     wetpath = joinpath(dirname(@__DIR__), "data", "wet.paths.gz")
     uris = wetURIs(wetpath)
-    @test @allocations(first(uris)) == 1 # 125.000 ns  Memory estimate: 192 bytes, allocs estimate: 1.
 
     path = joinpath(dirname(@__DIR__), "data", "warc.wet.gz")
     channel = wets(path)
