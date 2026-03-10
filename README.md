@@ -10,6 +10,7 @@
 Not your ordinary digester: Search the entire internet summarize into a "research grade" markdown file entirely on your computer in a day or your money back!
 
 ## TODO
+- [ ] in `wetURIs` preallocate the bytes use StringViews.jl to read that byte buffer whenever needed.
 - [ ] Fasttext to work on bytes to remove string allocations from the read. Quantize fast text 
 - [ ] Fix fasttext `tokenize` method as it's creating words that contain punctuation which will be out of vocab.
 - [ ] Optimize `read!` in `src/wets.jl` to use block-based I/O (`readuntil!`) with pre-allocated buffers instead of byte-by-byte reading.
@@ -32,6 +33,25 @@ Scoring fitness can be based on:
 
 
 ## IGNORE BELOW WIP
+
+### Ideas
+
+1. Pages/sec are we able to gunzip from online/local feed? This is the floor rate that we should maintain using all the extra cpu and gpu compute to do as much research as possible. Can be easily extended to the either floor rate or user defined param
+2. LLM speed
+3. Skimming speed.
+
+Perhaps N levels + intelligence to maintain pace?
+1. LLM thinking
+2. LLM non think
+3. Embedding model
+...
+N. bag of words?
+
+
+
+
+
+----
 
 
 

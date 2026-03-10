@@ -15,8 +15,8 @@ Base.@kwdef struct Configuration
     timeoutseconds::Int = 120
 end
 
-weturis(config::Configuration) = wetURIs(config.crawlpath; capacity=config.capacity, wetroot=config.crawlroot)
-wets(config::Configuration) = wets(weturis(config); capacity=config.capacity)
+weturis(config::Configuration) = wetURIs(config.crawlpath; capacity=config.capacity)
+wets(config::Configuration) = wets(weturis(config); capacity=config.capacity, wetroot=config.crawlroot)
 
 function coarsefilter(config::Configuration, entries::Channel{T}) where {T<:WET}
     relevant!(embedding(config.query; vecpath=config.vecpath), entries; capacity=config.capacity, threshold=config.threshold)

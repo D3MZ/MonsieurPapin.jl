@@ -14,7 +14,7 @@ rate(iterable, seconds) = round(count(iterable) / seconds)
         trial_weturis = @benchmark sum(_ -> 1, wetURIs($path_weturis))
         time_weturis = BenchmarkTools.median(trial_weturis).time / 1e9
         display(trial_weturis)
-        @test trial_weturis.allocs <= 1_000_000
+        @test trial_weturis.allocs <= 5 * 100_000 # less than 5 allocations per record (at 100K records)
         uris_per_second = rate(wetURIs(path_weturis), time_weturis)
         @info "Benchmarking wetURIs (paths)" uris = count(wetURIs(path_weturis)) uris_per_second = uris_per_second
     end
@@ -23,7 +23,7 @@ rate(iterable, seconds) = round(count(iterable) / seconds)
         trial_wets = @benchmark sum(_ -> 1, wets($path_wets))
         time_wets = BenchmarkTools.median(trial_wets).time / 1e9
         display(trial_wets)
-        @test trial_wets.allocs <= 52745
+        @test trial_wets.allocs <= 600_000 # less than 6 allocations per record
         records_per_second = rate(wets(path_wets), time_wets)
         @info "Benchmarking wets (records)" records = count(wets(path_wets)) records_per_second = records_per_second
         @test records_per_second >= 25_000

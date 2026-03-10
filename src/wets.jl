@@ -51,10 +51,11 @@ content(wet::WET, limit::Int) = text(wet.content, limit)
 
 # --- High-level API ---
 
-function wets(path::AbstractString; capacity=Threads.nthreads() * 10)
-    Channel{WET{urilimit,contentlimit}}(capacity) do channel
+function wets(path::AbstractString; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/")
+    isfile(path) && return Channel{WET{urilimit,contentlimit}}(capacity) do channel
         emit(channel, GzipDecompressorStream(open(path)))
     end
+    startswith(path, "http") ? wets(URI(path); capacity) : wets(URI(wetroot * path); capacity)
 end
 
 function wets(index::URI; capacity=Threads.nthreads() * 10)
@@ -66,14 +67,14 @@ function wets(index::URI; capacity=Threads.nthreads() * 10)
     end
 end
 
-wets(paths::AbstractVector{<:Union{AbstractString,URI}}; capacity=Threads.nthreads() * 10) =
+wets(paths::AbstractVector{<:Union{AbstractString,URI}}; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/") =
     Channel{WET{urilimit,contentlimit}}(capacity) do c
-        foreach(p -> foreach(w -> put!(c, w), wets(p; capacity)), paths)
+        foreach(p -> foreach(w -> put!(c, w), wets(p; capacity, wetroot)), paths)
     end
 
-wets(paths::Channel{URI}; capacity=Threads.nthreads() * 10) =
+wets(paths::Channel{T}; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/") where {T<:Union{AbstractString,URI}} =
     Channel{WET{urilimit,contentlimit}}(capacity) do c
-        foreach(p -> foreach(w -> put!(c, w), wets(p; capacity)), paths)
+        foreach(p -> foreach(w -> put!(c, w), wets(p; capacity, wetroot)), paths)
     end
 
 # --- Processing Pipeline ---
