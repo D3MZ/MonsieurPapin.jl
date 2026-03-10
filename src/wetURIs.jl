@@ -1,6 +1,6 @@
 wetURI(entry, wetroot) = URI(startswith(entry, "http") ? entry : wetroot * entry)
 
-wetURIs(path::AbstractString; capacity=10, wetroot="https://data.commoncrawl.org/") =
+wetURIs(path::AbstractString; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/") =
     Channel{URI}(capacity) do uris
         open(path) do file
             for entry in eachline(GzipDecompressorStream(file))
@@ -9,7 +9,7 @@ wetURIs(path::AbstractString; capacity=10, wetroot="https://data.commoncrawl.org
         end
     end
 
-wetURIs(index::URI; capacity=10, wetroot="https://data.commoncrawl.org/") =
+wetURIs(index::URI; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/") =
     Channel{URI}(capacity) do uris
         HTTP.open("GET", string(index)) do stream
             HTTP.startread(stream)

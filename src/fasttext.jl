@@ -77,7 +77,7 @@ isrelevant(source::Embedding, wet::WET; threshold=0.6) = isrelevant(source, cont
 
 score(source::Embedding, wet::WET) = scored(wet, distance(source, wet))
 
-function relevant!(source::Embedding, pages::Channel{T}; capacity=10, threshold=0.6) where {T<:WET}
+function relevant!(source::Embedding, pages::Channel{T}; capacity=Threads.nthreads() * 10, threshold=0.6) where {T<:WET}
     Channel{T}(capacity) do filtered
         Threads.foreach(pages) do wet
             candidate = score(source, wet)

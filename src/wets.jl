@@ -51,15 +51,13 @@ content(wet::WET, limit::Int) = text(wet.content, limit)
 
 # --- High-level API ---
 
-function wets(path::AbstractString; capacity=10)
+function wets(path::AbstractString; capacity=Threads.nthreads() * 10)
     Channel{WET{urilimit,contentlimit}}(capacity) do channel
-        open(path) do file
-            emit(channel, GzipDecompressorStream(file))
-        end
+        emit(channel, GzipDecompressorStream(open(path)))
     end
 end
 
-function wets(index::URI; capacity=10)
+function wets(index::URI; capacity=Threads.nthreads() * 10)
     Channel{WET{urilimit,contentlimit}}(capacity) do channel
         HTTP.open("GET", string(index)) do stream
             HTTP.startread(stream)
@@ -68,12 +66,12 @@ function wets(index::URI; capacity=10)
     end
 end
 
-wets(paths::AbstractVector{<:Union{AbstractString,URI}}; capacity=10) =
+wets(paths::AbstractVector{<:Union{AbstractString,URI}}; capacity=Threads.nthreads() * 10) =
     Channel{WET{urilimit,contentlimit}}(capacity) do c
         foreach(p -> foreach(w -> put!(c, w), wets(p; capacity)), paths)
     end
 
-wets(paths::Channel{URI}; capacity=10) =
+wets(paths::Channel{URI}; capacity=Threads.nthreads() * 10) =
     Channel{WET{urilimit,contentlimit}}(capacity) do c
         foreach(p -> foreach(w -> put!(c, w), wets(p; capacity)), paths)
     end
