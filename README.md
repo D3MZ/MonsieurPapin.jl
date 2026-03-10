@@ -11,7 +11,7 @@ Not your ordinary digester: Search the entire internet summarize into a "researc
 
 ## TODO
 - [x] 2x reduction in allocs: in `wetURIs` preallocate the bytes use StringViews.jl to read that byte buffer whenever needed.
-- [ ]
+- [ ] StringViews.jl in wets parsing? Maybe degrades performance since it's NTuple now.
 - [ ] Fasttext to work on bytes to remove string allocations from the read. Quantize fast text 
 - [ ] Fix fasttext `tokenize` method as it's creating words that contain punctuation which will be out of vocab.
 - [ ] Optimize `read!` in `src/wets.jl` to use block-based I/O (`readuntil!`) with pre-allocated buffers instead of byte-by-byte reading.

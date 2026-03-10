@@ -23,7 +23,7 @@ rate(iterable, seconds) = round(count(iterable) / seconds)
         trial_wets = @benchmark sum(_ -> 1, wets($path_wets))
         time_wets = BenchmarkTools.median(trial_wets).time / 1e9
         display(trial_wets)
-        @test trial_wets.allocs <= 600_000 # less than 6 allocations per record
+        @test trial_wets.allocs <= 75_000 # less than 3 allocations per record (~24K pages)
         records_per_second = rate(wets(path_wets), time_wets)
         @info "Benchmarking wets (records)" records = count(wets(path_wets)) records_per_second = records_per_second
         @test records_per_second >= 25_000
