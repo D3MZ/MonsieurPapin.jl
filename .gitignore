@@ -9,5 +9,6 @@ Manifest.toml
 docs/build/
 scratch*
 scratch/
+tmp/
 *.vec
 research/warc.wet.gz
