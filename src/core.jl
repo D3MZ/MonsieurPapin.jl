@@ -1,7 +1,7 @@
 Base.@kwdef struct Configuration
     crawlpath = URI("https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-08/wet.paths.gz")
     crawlroot::String = "https://data.commoncrawl.org/"
-    capacity::Int = 10
+    capacity::Int = Threads.nthreads() * 10
     threshold::Float64 = 0.6
     vecpath::String = "data/wiki-news-300d-1M.vec"
     query::String = "It doesn’t really matter which component you find first, the price action signal or the level. What matters is if the two have come together to form a confluent price action trade. When you have an obvious price action signal, like a pin bar or a fakey signal, and that signal has formed at a key horizontal level of support or resistance in a market, you have a potentially very high-probability trade on your hands."
