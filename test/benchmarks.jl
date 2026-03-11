@@ -4,7 +4,7 @@ using MonsieurPapin, BenchmarkTools, Test
 # USE REAL DATASETS, NOT SIMULATED FOR BENCHMARKING.
 path_weturis = joinpath(dirname(@__DIR__), "data", "wet.paths.gz")
 path_wets = joinpath(dirname(@__DIR__), "data", "warc.wet.gz")
-path_vectors = joinpath(dirname(@__DIR__), "data", "wiki-news-300d-1M.vec")
+model_source = "minishlab/potion-multilingual-128M"
 
 count(iterable) = sum(_ -> 1, iterable)
 rate(iterable, seconds) = round(count(iterable) / seconds)
@@ -30,7 +30,7 @@ rate(iterable, seconds) = round(count(iterable) / seconds)
     end
 
     @testset "relevant!" begin
-        source = embedding("cat dog"; vecpath=path_vectors)
+        source = embedding("cat dog"; vecpath=model_source)
         trial_relevant = @benchmark sum(_ -> 1, relevant!($source, wets($path_wets); threshold=0.0))
         time_relevant = BenchmarkTools.median(trial_relevant).time / 1e9
         display(trial_relevant)
