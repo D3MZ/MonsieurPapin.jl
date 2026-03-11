@@ -12,13 +12,12 @@ Not your ordinary digester: Search the entire internet summarize into a "researc
 ## TODO
 - [x] 2x reduction in allocs: in `wetURIs` preallocate the bytes use StringViews.jl to read that byte buffer whenever needed.
 - [ ] StringViews.jl in wets parsing? Maybe degrades performance since it's NTuple now.
-- [ ] Fasttext to work on bytes to remove string allocations from the read. Quantize fast text 
-- [ ] Fix fasttext `tokenize` method as it's creating words that contain punctuation which will be out of vocab.
+- [ ] Model2Vec coarse filter to work on bytes without string materialization.
 - [ ] Optimize `read!` in `src/wets.jl` to use block-based I/O (`readuntil!`) with pre-allocated buffers instead of byte-by-byte reading.
 - [ ] `test/benchmarks.jl` measures performance for each stage that uses the test files.
   - [x] wetURIs - how fast we're able to put URI structs into a channel and take from them.
   - [x] wets - how fast we're able to put WET structs into a channel and take from them.
-  - [ ] fasttext - similarity and distance calculation throughput (Pulls from WET channel, pushes into another channel)
+  - [ ] model2vec - similarity and distance calculation throughput (Pulls from WET channel, pushes into another channel)
   - [ ] relevant! - filtering performance and allocation count under load.
   - [ ] queue - ingestion and `best!` extraction speed of the `Frontier`.
   - [ ] llm - prompt construction overhead and end-to-end processing latency.
@@ -34,6 +33,23 @@ Scoring fitness can be based on:
 
 
 ## IGNORE BELOW WIP
+
+language independent filtering that's significantly faster than 25K pages/sec, 
+so I can use an Embedding model (2678 WETS /sec) to do a coarse filter for an LLM to extract real information.
+
+
+Current coarse scoring implementation is: 8K WETS / s
+Model2Vec Multi-lingual Embedding model (2678 WETS /sec)
+LLM can do about 0.1 WETS/sec
+
+
+| Pipeline Stage   | Input Velocity (Pages/Sec) | Operation Performed                  | Primary Technology / Algorithm                 | Output Velocity (Pages/Sec) |
+|------------------|-----------------------------|--------------------------------------|-----------------------------------------------|-------------------------------|
+| Ingestion        | Network Limits.             | WET File Download & Unzip            | HTTP                                          | ~25,000                       |
+| Coarse Filter    | ~25,000                     | Information Density Check            | LZ4 Compression Ratio (Compel)                | ~5,000                        |
+| Deduplication    | ~5,000                      | Exact & Fuzzy Redundancy Check       | Bloom Filter (Rust) & MinHash (SIMD)          | ~2,400                        |
+| Semantic Filter  | ~2,400                      | Vector Similarity Search             | Dense Embedding Model                         | < 0.1                         |
+| Extraction       | < 0.1                       | Deep Reasoning & Parsing             | Large Language Model (LLM)                    | Final Intelligence            |
 
 ### Ideas
 
@@ -72,12 +88,12 @@ end
 
 Ensure performance maintains +20K pages/sec
 - [x] Streaming and decompress
-- [x] Muse fast text on pages. Score distance. initial comparison: "trading strategies"
+- [x] Use an embedding model on pages. Score distance. initial comparison: "trading strategies"
 - [x] Insert into Priority Min Max Queue that's no more than 10K elements large.
 - [x] Generate an openai-compatible.json config for local endpoint/model/output path with optional password field.
 - [x] Have LLM pop from queue and if relevant, append write into a research markdown doc based on prompt: "If a trading strategy exists then write a small description about it and the trading strategy as pseudo code wrapped in a code fence, otherwise do not output anything". 
 - [ ] Fix progress bar so it displays correctly. Do benchmarking to determine if throttling the events going to it has any impact on it's performance. Report your results and if there's no performance then remove the update throttling from the code and refactor.
-- [ ] Actually use Multi lingual Fasttext properly.
+- [ ] Optimize the multilingual model2vec path.
 - [ ] move "trading strategy" query to the config.json file, and replace it with the text from this site: https://priceaction.com/blog/articles/simplest-trading-strategy-in-the-world/ 
 
 - [ ] Progress bar
