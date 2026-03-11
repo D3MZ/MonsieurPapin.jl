@@ -34,9 +34,9 @@ end
     if get(ENV, "MONSIEURPAPIN_BENCHMARK", "false") == "true"
         path = joinpath(dirname(@__DIR__), "data", "warc.wet.gz")
         documents = wets(path)
-        source = embedding("trading strategy"; vecpath="test/data/fasttext.vec")
+        source = embedding("trading strategy")
         filtered = relevant!(source, documents; threshold=0.0)
         config = Configuration(; outputpath=tempname(), capacity=10)
-        display(@benchmark MonsieurPapin.report($config, $filtered, $stub) samples=1 evals=1 seconds=60)
+        display(@benchmark MonsieurPapin.report($config, $filtered, $stub))
     end
 end

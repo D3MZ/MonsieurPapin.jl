@@ -4,7 +4,7 @@ using MonsieurPapin
 using Test
 using HTTP: URI
 
-include("fasttext.jl")
+include("scoring.jl")
 include("gettext.jl")
 include("core.jl")
 include("queue.jl")
