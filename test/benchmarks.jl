@@ -1,5 +1,6 @@
 # DO ADD OR REMOVE COMMENTS FROM THIS FILE
 using MonsieurPapin, BenchmarkTools, Test
+import MonsieurPapin: insert!
 
 # USE REAL DATASETS, NOT SIMULATED FOR BENCHMARKING.
 path_weturis = joinpath(dirname(@__DIR__), "data", "wet.paths.gz")
@@ -11,32 +12,43 @@ rate(iterable, seconds) = round(count(iterable) / seconds)
 
 @testset "benchmarks" begin
     @testset "wetURIs" begin
-        trial_weturis = @benchmark sum(_ -> 1, wetURIs($path_weturis))
-        time_weturis = BenchmarkTools.median(trial_weturis).time / 1e9
-        display(trial_weturis)
-        @test trial_weturis.allocs <= 5 * 100_000 # less than 5 allocations per record (at 100K records)
-        uris_per_second = rate(wetURIs(path_weturis), time_weturis)
+        benchmark = @benchmark sum(_ -> 1, wetURIs($path_weturis))
+        time = BenchmarkTools.median(benchmark).time / 1e9
+        display(benchmark)
+        @test benchmark.allocs <= 5 * 100_000 # less than 5 allocations per record (at 100K records)
+        uris_per_second = rate(wetURIs(path_weturis), time)
         @info "Benchmarking wetURIs (paths)" uris = count(wetURIs(path_weturis)) uris_per_second = uris_per_second
     end
 
     @testset "wets" begin
-        trial_wets = @benchmark sum(_ -> 1, wets($path_wets))
-        time_wets = BenchmarkTools.median(trial_wets).time / 1e9
-        display(trial_wets)
-        @test trial_wets.allocs <= 75_000 # less than 3 allocations per record (~24K pages)
-        records_per_second = rate(wets(path_wets), time_wets)
+        benchmark = @benchmark sum(_ -> 1, wets($path_wets))
+        time = BenchmarkTools.median(benchmark).time / 1e9
+        display(benchmark)
+        @test benchmark.allocs <= 75_000 # less than 3 allocations per record (~24K pages)
+        records_per_second = rate(wets(path_wets), time)
         @info "Benchmarking wets (records)" records = count(wets(path_wets)) records_per_second = records_per_second
         @test records_per_second >= 25_000
     end
 
     @testset "relevant!" begin
         source = embedding("cat dog"; vecpath=model_source)
-        trial_relevant = @benchmark sum(_ -> 1, relevant!($source, wets($path_wets); threshold=0.0))
-        time_relevant = BenchmarkTools.median(trial_relevant).time / 1e9
-        display(trial_relevant)
-        records_per_second = rate(relevant!(source, wets(path_wets); threshold=0.0), time_relevant)
+        benchmark = @benchmark sum(_ -> 1, relevant!($source, wets($path_wets); threshold=0.0))
+        time = BenchmarkTools.median(benchmark).time / 1e9
+        display(benchmark)
+        records_per_second = rate(relevant!(source, wets(path_wets); threshold=0.0), time)
         @info "Benchmarking relevant! (records)" records = count(relevant!(source, wets(path_wets); threshold=0.0)) records_per_second = records_per_second
         # @test records_per_second >= 25_000
+    end
+
+    @testset "Queuing the top 1K" begin
+        benchmark = @benchmark insert!(queue, wets($path_wets)) setup=(queue = WETQueue(1_000, typeof(first(wets($path_wets))))) evals=1
+        time = BenchmarkTools.median(benchmark).time / 1e9
+        display(benchmark)
+        queue = WETQueue(1_000, typeof(first(wets(path_wets))))
+        insert!(queue, wets(path_wets))
+        records_per_second = rate(wets(path_wets), time)
+        @info "Benchmarking queue (records)" records = count(wets(path_wets)) capacity = 1_000 retained = length(queue) records_per_second = records_per_second payload_mib = round(Base.summarysize(queue.heap) / 2.0^20; digits=4)
+        @test records_per_second >= 20_000
     end
 end
 

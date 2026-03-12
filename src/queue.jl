@@ -1,28 +1,55 @@
-Base.isless(first::WET, second::WET) = isless(first.score, second.score)
+using Base.Order: By, ReverseOrdering
+import DataStructures: heapify!
 
-struct Frontier{Value}
-    heap::BinaryMinMaxHeap{Value}
+struct WETQueue{Value, Ordering<:Base.Ordering}
+    heap::BinaryHeap{Value, Ordering}
     capacity::Int
 end
 
-frontier(capacity::Int, ::Type{Value}) where {Value} = Frontier(BinaryMinMaxHeap{Value}(), capacity)
+score(wet::WET) = wet.score
 
-Base.length(entries::Frontier) = length(entries.heap)
-Base.isempty(entries::Frontier) = isempty(entries.heap)
-
-function insert!(entries::Frontier{Value}, item::Value) where {Value}
-    length(entries) < entries.capacity && return push!(entries.heap, item)
-    item < maximum(entries.heap) || return entries.heap
-    popmax!(entries.heap)
-    push!(entries.heap, item)
+function WETQueue(capacity::Int, ::Type{Value}) where {Value<:WET}
+    WETQueue(BinaryHeap{Value}(ReverseOrdering(By(score))), capacity)
 end
 
-drain!(entries::Frontier{Value}, source) where {Value} = foreach(item -> insert!(entries, item), source)
+Base.length(queue::WETQueue) = length(queue.heap)
+Base.isempty(queue::WETQueue) = isempty(queue.heap)
+isfull(queue::WETQueue) = length(queue) >= queue.capacity
 
-best!(entries::Frontier) = isempty(entries) ? nothing : popmin!(entries.heap)
+function insert!(queue::WETQueue{<:WET}, item::WET)
+    !isfull(queue) && return push!(queue.heap, item)
+    score(item) < score(first(queue.heap)) || return queue.heap
+    pop!(queue.heap)
+    push!(queue.heap, item)
+end
+
+insert!(queue::WETQueue{<:WET}, channel::Channel{<:WET}) =
+    foreach(item -> insert!(queue, item), channel)
+
+function bestindex(values)
+    index = firstindex(values)
+    best = first(values)
+    for step in Iterators.drop(eachindex(values), 1)
+        score(values[step]) < score(best) || continue
+        index = step
+        best = values[step]
+    end
+    index
+end
+
+function Base.pop!(queue::WETQueue)
+    values = queue.heap.valtree
+    index = bestindex(values)
+    best = values[index]
+    deleteat!(values, index)
+    isempty(values) || heapify!(values, queue.heap.ordering)
+    best
+end
+
+best!(queue::WETQueue) = isempty(queue) ? nothing : pop!(queue)
 
 function best(source; capacity=10)
-    entries = frontier(capacity, eltype(source))
-    drain!(entries, source)
-    best!(entries)
+    queue = WETQueue(capacity, eltype(source))
+    insert!(queue, source)
+    best!(queue)
 end

@@ -1,9 +1,10 @@
 module MonsieurPapin
 
-using HTTP, CodecZlib, BufferedStreams, Dates, DataStructures, JSON, StringViews
+using HTTP, CodecZlib, BufferedStreams, Dates, JSON, StringViews
+using DataStructures: BinaryHeap
 using HTTP: URI
 
-export WET, wetURIs, wets, Configuration, Embedding, embedding, distance, complete, gettext, isrelevant, relevant!, frontier, drain!, best!, best, research
+export WET, WETQueue, wetURIs, wets, Configuration, Embedding, embedding, distance, complete, gettext, isrelevant, relevant!, best!, best, research
 
 
 include("wetURIs.jl")
