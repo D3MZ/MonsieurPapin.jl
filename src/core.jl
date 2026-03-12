@@ -18,7 +18,7 @@ end
 weturis(config::Configuration) = wetURIs(config.crawlpath; capacity=config.capacity)
 wets(config::Configuration) = wets(weturis(config); capacity=config.capacity, wetroot=config.crawlroot)
 
-function coarsefilter(config::Configuration, entries::Channel{T}) where {T<:WET}
+function coarsefilter(config::Configuration, entries::Channel{<:WET})
     relevant!(embedding(config.query; vecpath=config.vecpath), entries; capacity=config.capacity, threshold=config.threshold)
 end
 
@@ -26,10 +26,10 @@ append!(file, output::AbstractString) = isempty(output) ? file : (write(file, ou
 
 prompt(wet::WET, config::Configuration) = string("URI: ", uri(wet), "\nSCORE: ", wet.score, "\n\n", content(wet))
 
-active(channel::Channel{T}, shortlist::Frontier{T}, generation) where {T<:WET} =
+active(channel::Channel{<:WET}, shortlist::WETQueue, generation) =
     isopen(channel) || isready(channel) || !isempty(shortlist) || !isnothing(generation)
 
-function ingest!(shortlist::Frontier{T}, channel::Channel{T}) where {T<:WET}
+function ingest!(shortlist::WETQueue, channel::Channel{<:WET})
     while isready(channel)
         insert!(shortlist, take!(channel))
     end
@@ -41,21 +41,21 @@ summarize(config::Configuration, client, wet::WET) = Threads.@spawn complete(pro
 persist(generation::Nothing, file) = nothing
 persist(generation::Task, file) = istaskdone(generation) ? (append!(file, fetch(generation)); nothing) : generation
 
-launch(generation::Task, config::Configuration, client, shortlist::Frontier{T}) where {T<:WET} = generation
-launch(generation::Nothing, config::Configuration, client, shortlist::Frontier{T}) where {T<:WET} =
+launch(generation::Task, config::Configuration, client, shortlist::WETQueue) = generation
+launch(generation::Nothing, config::Configuration, client, shortlist::WETQueue) =
     isempty(shortlist) ? nothing : summarize(config, client, best!(shortlist))
 
-function idle(channel::Channel{T}, shortlist::Frontier{T}, ::Nothing) where {T<:WET}
+function idle(channel::Channel{<:WET}, shortlist::WETQueue, ::Nothing)
     isempty(shortlist) && isopen(channel) && !isready(channel) && wait(channel)
     yield()
 end
 
-function idle(channel::Channel{T}, shortlist::Frontier{T}, generation::Task) where {T<:WET}
+function idle(channel::Channel{<:WET}, shortlist::WETQueue, generation::Task)
     isempty(shortlist) && !isopen(channel) && wait(generation)
     yield()
 end
 
-function run!(file, entries::Channel{T}, config::Configuration, client, shortlist::Frontier{T}) where {T<:WET}
+function run!(file, entries::Channel{<:WET}, config::Configuration, client, shortlist::WETQueue)
     generation = nothing
     while active(entries, shortlist, generation)
         generation = persist(generation, file)
@@ -66,16 +66,16 @@ function run!(file, entries::Channel{T}, config::Configuration, client, shortlis
     file
 end
 
-function report(config::Configuration, entries::Channel{T}, client) where {T<:WET}
-    shortlist = frontier(config.capacity, eltype(entries))
+function report(config::Configuration, entries::Channel{<:WET}, client)
+    shortlist = WETQueue(config.capacity, eltype(entries))
     open(config.outputpath, "a") do file
         run!(file, entries, config, client, shortlist)
         config.outputpath
     end
 end
 
-report(config::Configuration, entries::Channel{T}) where {T<:WET} = report(config, entries, config)
-queue(config::Configuration, entries::Channel{T}) where {T<:WET} = Threads.@spawn report(config, entries)
+report(config::Configuration, entries::Channel{<:WET}) = report(config, entries, config)
+queue(config::Configuration, entries::Channel{<:WET}) = Threads.@spawn report(config, entries)
 
 function research(config::Configuration)
     entries = wets(config)
