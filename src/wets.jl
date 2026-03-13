@@ -22,8 +22,7 @@ struct WET{U,C}
     score::Float64
 end
 
-# Copy Constructor (Functional Update)
-scored(wet::WET, value) = WET(wet.uri, wet.content, wet.date, wet.length, value)
+update(value, wet::WET) = WET(wet.uri, wet.content, wet.date, wet.length, value)
 
 const urilimit = 4096
 const contentlimit = 12000

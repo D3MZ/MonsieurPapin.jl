@@ -50,7 +50,7 @@ function isrelevant(string1::AbstractString, string2::AbstractString; threshold=
     similarity(string1, string2; vecpath) >= threshold
 end
 
-score(source::Embedding, wet::WET) = scored(wet, distance(source, wet))
+score(source::Embedding, wet::WET) = update(distance(source, wet), wet)
 
 function score!(scores, pointers, lengths, source::Embedding, batch)
     resize!(scores, length(batch))
@@ -72,7 +72,7 @@ end
 
 function publish!(filtered, batch, scores, threshold)
     foreach(eachindex(batch, scores)) do i
-        candidate = scored(batch[i], scores[i])
+        candidate = update(scores[i], batch[i])
         candidate.score <= 1.0 - threshold && put!(filtered, candidate)
     end
     empty!(batch)
