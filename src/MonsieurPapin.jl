@@ -4,12 +4,13 @@ using HTTP, CodecZlib, BufferedStreams, Dates, JSON, StringViews
 using DataStructures: BinaryHeap
 using HTTP: URI
 
-export WET, WETQueue, wetURIs, wets, Configuration, Embedding, embedding, distance, complete, gettext, isrelevant, relevant!, best!, best, research
+export WET, WETQueue, wetURIs, wets, Configuration, Embedding, embedding, distance, complete, gettext, isrelevant, relevant!, best!, best, research, AC, DAAC, ismatch
 
 
 include("wetURIs.jl")
 include("wets.jl")
-include("Model2VecJlrs.jl")
+include("RustWorker.jl")
+using .RustWorker: AC, DAAC, ismatch
 include("scoring.jl")
 include("queue.jl")
 include("gettext.jl")

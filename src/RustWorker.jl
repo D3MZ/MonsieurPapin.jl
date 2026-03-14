@@ -1,4 +1,4 @@
-module Model2VecJlrs
+module RustWorker
 
 using JlrsCore
 using JlrsCore.Wrap
@@ -36,6 +36,56 @@ call(name::Symbol, args...) = Base.invokelatest(binding(name), args...)
 
 mutable struct Model
     handle::UInt
+end
+
+mutable struct AC
+    handle::UInt
+end
+
+mutable struct DAAC
+    handle::UInt
+end
+
+function AC(patterns::Vector{<:AbstractString})
+    load()
+    joined = join(patterns, '\x1F')
+    entry = AC(call(:build_aho_corasick, joined))
+    finalizer(close, entry)
+    entry
+end
+
+function DAAC(patterns::Vector{<:AbstractString})
+    load()
+    joined = join(patterns, '\x1F')
+    entry = DAAC(call(:build_daachorse, joined))
+    finalizer(close, entry)
+    entry
+end
+
+function Base.close(entry::AC)
+    entry.handle == 0 && return entry
+    call(:close_aho_corasick, entry.handle)
+    entry.handle = 0
+    entry
+end
+
+function Base.close(entry::DAAC)
+    entry.handle == 0 && return entry
+    call(:close_daachorse, entry.handle)
+    entry.handle = 0
+    entry
+end
+
+function ismatch(entry::AC, pointer::Ptr{UInt8}, length::Integer)
+    call(:match_aho_corasick, entry.handle, UInt(pointer), UInt(length))
+end
+
+function ismatch(entry::DAAC, pointer::Ptr{UInt8}, length::Integer)
+    call(:match_daachorse, entry.handle, UInt(pointer), UInt(length))
+end
+
+function ismatch(entry::Union{AC, DAAC}, text::AbstractString)
+    ismatch(entry, pointer(text), ncodeunits(text))
 end
 
 function open(model::AbstractString, query::AbstractString)

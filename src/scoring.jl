@@ -1,7 +1,7 @@
 struct Embedding
     model::String
     text::String
-    handle::Model2VecJlrs.Model
+    handle::RustWorker.Model
 end
 
 contentoffset(::Type{T}) where {T<:WET} = fieldoffset(T, 2) + fieldoffset(fieldtype(T, 2), 1)
@@ -9,12 +9,12 @@ contentoffset(::Type{T}) where {T<:WET} = fieldoffset(T, 2) + fieldoffset(fieldt
 function embedding(text::AbstractString, model::AbstractString)
     value = String(text)
     source = String(model)
-    Embedding(source, value, Model2VecJlrs.open(source, value))
+    Embedding(source, value, RustWorker.open(source, value))
 end
 
 embedding(text::AbstractString; vecpath="minishlab/potion-multilingual-128M") = embedding(text, vecpath)
 
-distance(first::Embedding, second::AbstractString) = Model2VecJlrs.score(second, first.handle)
+distance(first::Embedding, second::AbstractString) = RustWorker.score(second, first.handle)
 distance(first::Embedding, second::Embedding) = distance(first, second.text)
 
 function distance(source::Embedding, wet::WET)
@@ -26,7 +26,7 @@ function distance(source::Embedding, wet::WET)
     GC.@preserve reference pointers lengths scores begin
         pointers[firstindex(pointers)] = UInt(Base.unsafe_convert(Ptr{typeof(wet)}, reference)) + contentoffset(typeof(wet))
         lengths[firstindex(lengths)] = wet.content.length
-        Model2VecJlrs.score!(scores, pointers, lengths, source.handle)
+        RustWorker.score!(scores, pointers, lengths, source.handle)
     end
 
     first(scores)
@@ -50,6 +50,14 @@ function isrelevant(string1::AbstractString, string2::AbstractString; threshold=
     similarity(string1, string2; vecpath) >= threshold
 end
 
+function RustWorker.ismatch(entry::Union{RustWorker.AC, RustWorker.DAAC}, wet::WET)
+    reference = Ref(wet)
+    GC.@preserve reference begin
+        ptr = Base.unsafe_convert(Ptr{UInt8}, reference) + contentoffset(typeof(wet))
+        RustWorker.ismatch(entry, ptr, wet.content.length)
+    end
+end
+
 score(source::Embedding, wet::WET) = update(distance(source, wet), wet)
 
 function score!(scores, pointers, lengths, source::Embedding, batch)
@@ -64,7 +72,7 @@ function score!(scores, pointers, lengths, source::Embedding, batch)
             lengths[i] = batch[i].content.length
         end
 
-        Model2VecJlrs.score!(scores, pointers, lengths, source.handle)
+        RustWorker.score!(scores, pointers, lengths, source.handle)
     end
 
     scores
