@@ -76,16 +76,16 @@ function Base.close(entry::DAAC)
     entry
 end
 
-function ismatch(entry::AC, pointer::Ptr{UInt8}, length::Integer)
+function score(entry::AC, pointer::Ptr{UInt8}, length::Integer)::UInt32
     call(:match_aho_corasick, entry.handle, UInt(pointer), UInt(length))
 end
 
-function ismatch(entry::DAAC, pointer::Ptr{UInt8}, length::Integer)
+function score(entry::DAAC, pointer::Ptr{UInt8}, length::Integer)::UInt32
     call(:match_daachorse, entry.handle, UInt(pointer), UInt(length))
 end
 
-function ismatch(entry::Union{AC, DAAC}, text::AbstractString)
-    ismatch(entry, pointer(text), ncodeunits(text))
+function score(entry::Union{AC, DAAC}, text::AbstractString)::UInt32
+    score(entry, pointer(text), ncodeunits(text))
 end
 
 function open(model::AbstractString, query::AbstractString)

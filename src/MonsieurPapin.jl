@@ -4,7 +4,7 @@ using HTTP, CodecZlib, BufferedStreams, Dates, JSON, StringViews
 using DataStructures: BinaryHeap
 using HTTP: URI
 
-export WET, WETQueue, wetURIs, wets, Configuration, Embedding, embedding, distance, complete, gettext, isrelevant, relevant!, best!, best, research, AC, DAAC, ismatch, simhash, Deduper, isduplicate
+export WET, WETQueue, wetURIs, wets, Configuration, Embedding, embedding, distance, score, complete, gettext, isrelevant, relevant!, best!, best, research, AC, DAAC, simhash, Deduper, isduplicate
 
 
 include("wetURIs.jl")

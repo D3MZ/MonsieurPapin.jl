@@ -12,73 +12,38 @@ request(config::Configuration, page::AbstractString) = Dict(
     "input" => string(config.input, "\n\n", page)
 )
 
-# Flexible parsing for different local LLM server responses
-function result(data)
-    # Handle the specific case of Any[...] string representation
-    if data isa AbstractString
-        # Use stripjson to find the real JSON inside
-        clean = stripjson(data)
-        try
-            # If it's a stringified Dict/Array from Julia, it might fail standard JSON parse
-            # But let's try
-            return clean
-        catch
-            return data
-        end
-    end
-
-    # Handle array of objects
+# Deeply extract content from various response structures
+function extract_content(data)
+    # 1. If it's a message array, look for the first message type
     if data isa AbstractVector
         for item in data
-            if item isa AbstractDict
-                if get(item, "type", "") == "message"
-                    return get(item, "content", "")
-                end
-            end
+            res = extract_content(item)
+            !isempty(res) && return res
         end
-        if !isempty(data)
-            it = first(data)
-            return it isa AbstractDict ? get(it, "content", get(it, "text", string(it))) : string(it)
-        end
-    end
-
-    # Handle standard dictionary responses
-    if data isa AbstractDict
-        if haskey(data, "output")
-            return data["output"]
+    # 2. If it's a dict, look for content, text, or message fields
+    elseif data isa AbstractDict
+        if get(data, "type", "") == "message"
+            return get(data, "content", "")
+        elseif haskey(data, "content")
+            return extract_content(data["content"])
+        elseif haskey(data, "output")
+            return extract_content(data["output"])
         elseif haskey(data, "text")
-            return data["text"]
-        elseif haskey(data, "choices") && !isempty(data["choices"])
-            choice = first(data["choices"])
-            if choice isa AbstractDict
-                if haskey(choice, "message")
-                    msg = choice["message"]
-                    return msg isa AbstractDict ? get(msg, "content", "") : string(msg)
-                elseif haskey(choice, "text")
-                    return choice["text"]
-                end
-            end
+            return extract_content(data["text"])
+        elseif haskey(data, "choices")
+            return extract_content(data["choices"])
+        elseif haskey(data, "message")
+            return extract_content(data["message"])
         end
+    # 3. If it's already a string, we are done
+    elseif data isa AbstractString
+        return data
     end
-
-    return string(data)
+    return ""
 end
 
 function stripjson(text::AbstractString)
-    # 1. Pre-clean: if it's a stringified Julia Object, it might have "content" => "..."
-    # We look for the "content" key and capture its value accurately.
-    # We look for the message content specifically.
-    m_content = match(r"\"content\"\s*=>\s*\"(.*?)(?<!\\)\""s, text)
-    if !isnothing(m_content)
-        content = m_content.captures[1]
-        unescaped = unescape_string(content)
-        # If the unescaped content is a JSON object, strip it recursively
-        if contains(unescaped, "{") && contains(unescaped, "}")
-            return stripjson(unescaped)
-        end
-        return unescaped
-    end
-
+    # Aggressively extract the largest valid-looking JSON object {...}
     first_brace = findfirst('{', text)
     last_brace = findlast('}', text)
     
@@ -93,20 +58,12 @@ function complete(page::AbstractString, config::Configuration)
     response = HTTP.post(url(config); headers=headers(config), body=JSON.json(request(config, page)), readtimeout=config.timeoutseconds)
     body_str = String(response.body)
     
-    # If the body is a direct JSON string from the server
-    data = try
-        JSON.parse(body_str)
-    catch
-        # If not, it's mixed chatter
-        body_str
-    end
+    # Parse the server response (which is JSON)
+    data = JSON.parse(body_str)
     
-    res = result(data)
+    # Extract the actual text content from the response structure
+    text_content = extract_content(data)
     
-    # If the result is a string containing JSON, strip it
-    if res isa AbstractString && contains(res, "{") && contains(res, "}")
-        return stripjson(res)
-    end
-    
-    return string(res)
+    # Return the clean text
+    return text_content
 end
