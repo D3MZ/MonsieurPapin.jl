@@ -50,15 +50,18 @@ function isrelevant(string1::AbstractString, string2::AbstractString; threshold=
     similarity(string1, string2; vecpath) >= threshold
 end
 
-function RustWorker.ismatch(entry::Union{RustWorker.AC, RustWorker.DAAC}, wet::WET)
+function RustWorker.score(entry::Union{RustWorker.AC, RustWorker.DAAC}, wet::WET)
     reference = Ref(wet)
     GC.@preserve reference begin
         ptr = Base.unsafe_convert(Ptr{UInt8}, reference) + contentoffset(typeof(wet))
-        RustWorker.ismatch(entry, ptr, wet.content.length)
+        RustWorker.score(entry, ptr, wet.content.length)
     end
 end
 
-score(source::Embedding, wet::WET) = update(distance(source, wet), wet)
+function score(source::Embedding, wet::WET)
+    s = distance(source, wet)
+    update(s, wet)
+end
 
 function score!(scores, pointers, lengths, source::Embedding, batch)
     resize!(scores, length(batch))

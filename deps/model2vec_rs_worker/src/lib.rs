@@ -137,19 +137,19 @@ fn build_daachorse(patterns: JuliaString) -> JlrsResult<usize> {
     })
 }
 
-fn match_aho_corasick(handle: usize, pointer: usize, length: usize) -> JlrsResult<bool> {
+fn match_aho_corasick(handle: usize, pointer: usize, length: usize) -> JlrsResult<u32> {
     protect(|| {
         let state = unsafe { &*(handle as *const ACState) };
         let haystack = unsafe { slice::from_raw_parts(pointer as *const u8, length) };
-        Ok(state.ac.find(haystack).is_some())
+        Ok(state.ac.find_iter(haystack).count() as u32)
     })
 }
 
-fn match_daachorse(handle: usize, pointer: usize, length: usize) -> JlrsResult<bool> {
+fn match_daachorse(handle: usize, pointer: usize, length: usize) -> JlrsResult<u32> {
     protect(|| {
         let state = unsafe { &*(handle as *const DAACState) };
         let haystack = unsafe { slice::from_raw_parts(pointer as *const u8, length) };
-        Ok(state.daac.find_iter(haystack).next().is_some())
+        Ok(state.daac.find_iter(haystack).count() as u32)
     })
 }
 
@@ -178,8 +178,8 @@ julia_module! {
     fn scorebatch(handle: usize, textpointers: TypedVector<usize>, textlengths: TypedVector<usize>, scores: TypedVector<f64>) -> JlrsResult<Nothing> as scorebatch!;
     fn build_aho_corasick(patterns: JuliaString) -> JlrsResult<usize>;
     fn build_daachorse(patterns: JuliaString) -> JlrsResult<usize>;
-    fn match_aho_corasick(handle: usize, pointer: usize, length: usize) -> JlrsResult<bool>;
-    fn match_daachorse(handle: usize, pointer: usize, length: usize) -> JlrsResult<bool>;
+    fn match_aho_corasick(handle: usize, pointer: usize, length: usize) -> JlrsResult<u32>;
+    fn match_daachorse(handle: usize, pointer: usize, length: usize) -> JlrsResult<u32>;
     fn close_aho_corasick(handle: usize) -> Nothing;
     fn close_daachorse(handle: usize) -> Nothing;
 }

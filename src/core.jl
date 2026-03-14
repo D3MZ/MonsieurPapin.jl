@@ -20,7 +20,6 @@ end
 function fetchseed(url::AbstractString)
     try
         response = HTTP.get(String(url); timeout=30)
-        # Use existing gettext for cleaner extraction
         return gettext(String(response.body))
     catch e
         @warn "Failed to fetch $url: $e"
@@ -32,7 +31,6 @@ function bootstrap(config::Configuration, urls::Vector{<:AbstractString}, task::
     @info "Bootstrapping crawl from seed URLs..." urls
     seeds_text = join([fetchseed(url) for url in urls], "\n\n")
     
-    # Analyze task and seeds to get keywords and query
     analysis_prompt = """
     Analyze the following Task and Seed Content.
     Produce a JSON object with two fields:
@@ -44,20 +42,16 @@ function bootstrap(config::Configuration, urls::Vector{<:AbstractString}, task::
     Task: $task
     
     Seed Content:
-    $(first(seeds_text, 3000))
+    $(first(seeds_text, 2000))
     """
     
-    # We temporarily update config to call LLM for analysis
-    # Use a simpler system prompt for this internal step
     analysis_config = deepcopy(config)
     analysis_config.systemprompt = "You are a technical analyst assistant. Output ONLY JSON."
     
     response_text = complete(analysis_prompt, analysis_config)
     
     try
-        # Strip potential thinking or markdown from JSON
         clean_json = stripjson(response_text)
-        @debug "Attempting to parse JSON" clean_json
         data = JSON.parse(clean_json)
         config.keywords = convert(Vector{String}, data["keywords"])
         config.query = convert(String, data["query"])
@@ -73,99 +67,96 @@ end
 weturis(config::Configuration) = wetURIs(config.crawlpath; capacity=config.capacity)
 wets(config::Configuration) = wets(weturis(config); capacity=config.capacity, wetroot=config.crawlroot)
 
-function coarsefilter(config::Configuration, entries::Channel{<:WET})
-    # Initialize Deduper and AC
+# --- Pipeline Stages ---
+
+"""
+    harvest(config, entries) -> Channel{WET}
+
+Stage 1: High-speed deduplication and keyword matching.
+Filters the raw stream down to candidates that contain target keywords.
+"""
+function harvest(config::Configuration, entries::Channel{<:WET})
+    out = Channel{eltype(entries)}(config.capacity)
     deduper = Deduper(config.dedupe_capacity)
     ac = isempty(config.keywords) ? nothing : AC(config.keywords)
-    emb = embedding(config.query; vecpath=config.vecpath)
-    
-    # We wrap the channel to apply filters
-    out = Channel{eltype(entries)}(config.capacity)
     
     Threads.@spawn begin
         try
             for wet in entries
-                # 1. SimHash Dedupe
+                # 1. Dedupe
                 isduplicate(deduper, wet) && continue
                 
-                # 2. Keyword Filter (AC)
+                # 2. Keyword score
                 if !isnothing(ac)
-                    ismatch(ac, wet) || continue
+                    # We store the match count in the score field for now
+                    # A non-zero count is our filter
+                    s = RustWorker.score(ac, wet)
+                    s > 0 || continue
+                    # Update wet with preliminary score
+                    wet = update(Float64(s), wet)
                 end
                 
-                # 3. Semantic Filter (Embedding)
-                if isrelevant(wet, emb; threshold=config.threshold)
-                    put!(out, wet)
-                end
+                put!(out, wet)
             end
         finally
             close(out)
             !isnothing(ac) && close(ac)
         end
     end
-    
     out
 end
 
-isrelevant(wet::WET, emb::Embedding; threshold=0.6) = distance(emb, wet) >= threshold
+"""
+    semantic(config, entries) -> WETQueue
+
+Stage 2: Semantic scoring via embeddings.
+Consumes from harvest and maintains a prioritized queue of the most relevant items.
+"""
+function semantic(config::Configuration, entries::Channel{<:WET})
+    shortlist = WETQueue(config.capacity, eltype(entries))
+    emb = embedding(config.query; vecpath=config.vecpath)
+    
+    # This stage runs until entries is closed
+    for wet in entries
+        # Score via embedding model (cosine similarity)
+        s = distance(emb, wet)
+        if s >= config.threshold
+            insert!(shortlist, update(s, wet))
+        end
+    end
+    shortlist
+end
+
+# --- Final Orchestration ---
 
 append!(file, output::AbstractString) = isempty(output) ? file : (write(file, output, "\n"); flush(file); file)
 
 prompt(wet::WET, config::Configuration) = string("URI: ", uri(wet), "\nSCORE: ", wet.score, "\n\n", content(wet))
 
-active(channel::Channel{<:WET}, shortlist::WETQueue, generation) =
-    isopen(channel) || isready(channel) || !isempty(shortlist) || !isnothing(generation)
-
-function ingest!(shortlist::WETQueue, channel::Channel{<:WET})
-    while isready(channel)
-        insert!(shortlist, take!(channel))
-    end
-    shortlist
-end
-
-summarize(config::Configuration, client, wet::WET) = Threads.@spawn complete(prompt(wet, config), client)
-
-persist(generation::Nothing, file) = nothing
-persist(generation::Task, file) = istaskdone(generation) ? (append!(file, fetch(generation)); nothing) : generation
-
-launch(generation::Task, config::Configuration, client, shortlist::WETQueue) = generation
-launch(generation::Nothing, config::Configuration, client, shortlist::WETQueue) =
-    isempty(shortlist) ? nothing : summarize(config, client, best!(shortlist))
-
-function idle(channel::Channel{<:WET}, shortlist::WETQueue, ::Nothing)
-    isempty(shortlist) && isopen(channel) && !isready(channel) && wait(channel)
-    yield()
-end
-
-function idle(channel::Channel{<:WET}, shortlist::WETQueue, generation::Task)
-    isempty(shortlist) && !isopen(channel) && wait(generation)
-    yield()
-end
-
-function run!(file, entries::Channel{<:WET}, config::Configuration, client, shortlist::WETQueue)
-    generation = nothing
-    while active(entries, shortlist, generation)
-        generation = persist(generation, file)
-        ingest!(shortlist, entries)
-        generation = launch(generation, config, client, shortlist)
-        idle(entries, shortlist, generation)
-    end
-    file
-end
-
-function report(config::Configuration, entries::Channel{<:WET}, client)
-    shortlist = WETQueue(config.capacity, eltype(entries))
-    open(config.outputpath, "a") do file
-        run!(file, entries, config, client, shortlist)
-        config.outputpath
-    end
-end
-
-report(config::Configuration, entries::Channel{<:WET}) = report(config, entries, config)
-queue(config::Configuration, entries::Channel{<:WET}) = Threads.@spawn report(config, entries)
-
 function research(config::Configuration)
-    entries = wets(config)
-    filtered = coarsefilter(config, entries)
-    queue(config, filtered)
+    raw_wets = wets(config)
+    candidates = harvest(config, raw_wets)
+    
+    # We use a separate task for extraction so it can run while semantic stage buffers
+    Threads.@spawn begin
+        open(config.outputpath, "a") do file
+            # In this refactored version, we process the stream in semantic stage
+            # which returns a prioritized queue once the stream is exhausted.
+            # However, for continuous extraction, we might want to pop from queue
+            # as soon as it's "good enough".
+            
+            # For simplicity in this first staged version, we process the full stream:
+            shortlist = semantic(config, candidates)
+            
+            @info "Crawl exhausted. Extracting top results..." count=length(shortlist)
+            
+            while !isempty(shortlist)
+                best_wet = best!(shortlist)
+                @info "Analyzing high-relevance page" uri=uri(best_wet) score=best_wet.score
+                output = complete(prompt(best_wet, config), config)
+                append!(file, output)
+            end
+        end
+        @info "Research complete."
+    end
 end
