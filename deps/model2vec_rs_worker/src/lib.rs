@@ -54,16 +54,14 @@ fn close(handle: usize) -> Nothing {
     Nothing
 }
 
-fn text(pointer: usize, length: usize) -> String {
-    unsafe { String::from_utf8_lossy(slice::from_raw_parts(pointer as *const u8, length)).into_owned() }
-}
-
 fn score(handle: usize, textpointers: &[usize], textlengths: &[usize]) -> Result<Vec<f64>> {
     let state = unsafe { &*(handle as *const State) };
     let texts = textpointers
         .iter()
         .zip(textlengths.iter())
-        .map(|(&pointer, &length)| text(pointer, length))
+        .map(|(&pointer, &length)| unsafe {
+            std::str::from_utf8_unchecked(slice::from_raw_parts(pointer as *const u8, length)).to_owned()
+        })
         .collect::<Vec<_>>();
     let embeddings = state.model.encode_with_args(&texts, Some(512), texts.len());
     let mut scores = Vec::with_capacity(embeddings.len());
