@@ -17,13 +17,13 @@ Snippet(text::AbstractString, ::Val{N}) where {N} = (u = codeunits(text); Snippe
 struct WET{U,C,L}
     uri::Snippet{U}
     content::Snippet{C}
-    language::Snippet{L}
+    languages::Snippet{L}
     date::DateTime
     length::Int
     score::Float64
 end
 
-update(value, wet::WET) = WET(wet.uri, wet.content, wet.language, wet.date, wet.length, value)
+update(value, wet::WET) = WET(wet.uri, wet.content, wet.languages, wet.date, wet.length, value)
 
 const urilimit = 4096
 const contentlimit = 12000
@@ -68,7 +68,7 @@ end
 uri(wet::WET) = text(wet.uri)
 content(wet::WET) = text(wet.content)
 content(wet::WET, limit::Int) = text(wet.content, limit)
-language(wet::WET) = text(wet.language)
+language(wet::WET) = text(wet.languages)
 languages(wet::WET) = filter(code -> !isempty(code), strip.(split(language(wet), ',')))
 
 # --- High-level API ---
