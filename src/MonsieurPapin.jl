@@ -12,7 +12,7 @@ include("wets.jl")
 include("RustWorker.jl")
 using .RustWorker: AC, DAAC, ismatch
 include("scoring.jl")
-include("dedupe.jl")
+include("simhash.jl")
 include("queue.jl")
 include("gettext.jl")
 include("core.jl")
