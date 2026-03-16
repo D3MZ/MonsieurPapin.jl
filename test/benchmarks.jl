@@ -1,6 +1,6 @@
 # DO ADD OR REMOVE COMMENTS FROM THIS FILE
 using MonsieurPapin, BenchmarkTools, Statistics, Test
-import MonsieurPapin: insert!, score
+import MonsieurPapin: insert!, score, content, gettext, distance
 
 # USE REAL DATASETS, NOT SIMULATED FOR BENCHMARKING.
 urispath = joinpath(dirname(@__DIR__), "data", "wet.paths.gz")
@@ -12,7 +12,7 @@ rate(iterable, seconds) = round(count(iterable) / seconds)
 
 @testset "benchmarks" begin
     @testset "wetURIs" begin
-        benchmark = @benchmark sum(_ -> 1, wetURIs($urispath))
+        benchmark = @benchmark sum(_ -> 1, wetURIs($urispath)) samples=1 seconds=5
         time = median(benchmark).time / 1e9
         display(benchmark)
         @test benchmark.allocs <= 5 * 100_000 # less than 5 allocations per record (at 100K records)
@@ -21,7 +21,7 @@ rate(iterable, seconds) = round(count(iterable) / seconds)
     end
 
     @testset "wets" begin
-        benchmark = @benchmark sum(_ -> 1, wets($wetspath))
+        benchmark = @benchmark sum(_ -> 1, wets($wetspath)) samples=1 seconds=5
         time = median(benchmark).time / 1e9
         display(benchmark)
         @test benchmark.allocs <= 75_000 # less than 3 allocations per record (~24K pages)
@@ -30,19 +30,36 @@ rate(iterable, seconds) = round(count(iterable) / seconds)
         @test records_per_second >= 25_000
     end
 
-    @testset "Multilingual Distance between Query and WET" begin
-        benchmark = @benchmark score(source, take!(channel)) setup=(
-            source = embedding("cat dog"; vecpath=model_source);
-            channel = wets(wetspath)
-        ) samples=1 evals=count(wets(wetspath))
+    @testset "Keyword Matching (Aho-Corasick)" begin
+        keywords = ["trading", "strategy", "alpha", "finance", "stock", "market", "price", "signal", "yield", "portfolio"]
+        benchmark = @benchmark sum(_ -> 1, (MonsieurPapin.RustWorker.score(ac, wet) for wet in wets($wetspath))) setup=(ac = AC($keywords)) samples=1 seconds=5
         time = median(benchmark).time / 1e9
         display(benchmark)
-        @info "Benchmarking relevant! (records)" records_per_second = round(1 / time)
+        records_per_second = rate(wets(wetspath), time)
+        @info "Benchmarking AC (records)" records = count(wets(wetspath)) keywords = length(keywords) records_per_second = records_per_second
+        @test records_per_second >= 20_000
+    end
+
+    @testset "Deduplication (SimHash)" begin
+        benchmark = @benchmark sum(_ -> 1, (isduplicate(deduper, wet) for wet in wets($wetspath))) setup=(deduper = Deduper(100_000)) samples=1 seconds=5
+        time = median(benchmark).time / 1e9
+        display(benchmark)
+        records_per_second = rate(wets(wetspath), time)
+        @info "Benchmarking simhash (records)" records = count(wets(wetspath)) records_per_second = records_per_second
+        @test records_per_second >= 3_000
+    end
+
+    @testset "Multilingual Distance between Query and WET" begin
+        benchmark = @benchmark sum(_ -> 1, (score(source, wet) for wet in wets($wetspath))) setup=(source = embedding("cat dog"; vecpath=model_source)) samples=1 seconds=5
+        time = median(benchmark).time / 1e9
+        display(benchmark)
+        records_per_second = rate(wets(wetspath), time)
+        @info "Benchmarking relevant! (records)" records_per_second = records_per_second
         @test records_per_second >= 400
     end
 
     @testset "Queuing the top 1K" begin
-        benchmark = @benchmark insert!(queue, wets($wetspath)) setup=(queue = WETQueue(1_000, typeof(first(wets($wetspath))))) evals=1
+        benchmark = @benchmark insert!(queue, wets($wetspath)) setup=(queue = WETQueue(1_000, typeof(first(wets($wetspath))))) samples=1 seconds=5
         time = median(benchmark).time / 1e9
         display(benchmark)
         queue = WETQueue(1_000, typeof(first(wets(wetspath))))
@@ -52,25 +69,3 @@ rate(iterable, seconds) = round(count(iterable) / seconds)
         @test records_per_second >= 20_000
     end
 end
-
-# wet is 2x faster than wet2 below. wet2 just read lines and does nothing, but wet is still much faster despite doing more
-# function wet2(path="data/warc.wet.gz")
-#     stream = GzipDecompressorStream(open(path))
-#     for line in eachline(stream)
-#         # do something...
-#     end
-#     close(stream)
-# end
-
-# @benchmark wet2()
-
-# BenchmarkTools.Trial: 3 samples with 1 evaluation per sample.
-#  Range (min … max):  1.708 s …   1.737 s  ┊ GC (min … max): 3.66% … 5.11%
-#  Time  (median):     1.736 s              ┊ GC (median):    5.09%
-#  Time  (mean ± σ):   1.727 s ± 16.457 ms  ┊ GC (mean ± σ):  4.63% ± 0.83%
-
-#   ▁                                                       █  
-#   █▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁█ ▁
-#   1.71 s         Histogram: frequency by time        1.74 s <
-
-#  Memory estimate: 1.08 GiB, allocs estimate: 17426086.
