@@ -7,6 +7,7 @@ import MonsieurPapin: insert!
 queued(value) = WET(
     MonsieurPapin.Snippet{1}((0x61,), 1),
     MonsieurPapin.Snippet{1}((0x61,), 1),
+    MonsieurPapin.Snippet{3}((0x65, 0x6e, 0x67), 3),
     DateTime(2026, 3, 4),
     1,
     value,
