@@ -25,9 +25,15 @@ Not your ordinary digester: Search the entire internet summarize into a "researc
 - [x] Add languages to configuration struct. 
   - [x] Skip languages not specified.
   - [x] Add translate(string, language) to `llm.jl`.
-- [ ] `references.jl`
-  - [ ] 
-  - [ ] 
+- [ ] `crawl.jl`
+  - [ ] `crawl(url::String)` Crawl Reference URLs
+  - [ ] `gettext(crawloutput::String)::String` Extract Text from crawl
+- [ ] `tokenize.jl`
+  - [ ] `tokenize(string)::Vector{Vector{Bytes}}` 
+  - [ ] `tokenfrequency(tokens::Vector{Vector{Bytes}})::Vector{Vector{Bytes},Int}`
+  - [ ] `inversetokenfreq(counts::Vector{Vector{Bytes},Int})` 
+  - [ ] `normalize(termcounts, doclength::Int)`
+- [ ] `score.jl` - add scoring function that 
 
 Scoring fitness can be based on:
 1. Relevance
@@ -40,7 +46,7 @@ Scoring fitness can be based on:
 ## IGNORE BELOW WIP
 
 Initialization
-1. Crawl Reference URLs -> Extract Text -> Translate into [Languages] -> Aggregate into term frequencies -> Build document length normalized score system.
+1. Crawl Reference URLs -> Extract Text -> Translate full text into [Languages] -> Aggregate into term frequencies -> Build document length normalized score system.
 2. Aho-Corasick
 
 

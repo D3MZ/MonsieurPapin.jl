@@ -1,15 +1,15 @@
-using Dates
+using CodecZlib
 using Test
 using HTTP: URI
 
-entry(text, language, score=0.0) = WET(
-    MonsieurPapin.Snippet("https://example.com", Val(32)),
-    MonsieurPapin.Snippet(text, Val(32)),
-    MonsieurPapin.Snippet(language, Val(32)),
-    DateTime(2026, 3, 3),
-    ncodeunits(text),
-    score,
-)
+entryrecord(content; language="eng", uri="https://example.com") =
+    "WARC/1.0\r\n" *
+    "WARC-Type: conversion\r\n" *
+    "WARC-Target-URI: $uri\r\n" *
+    "WARC-Date: 2026-03-03T00:00:00Z\r\n" *
+    "WARC-Identified-Content-Language: $language\r\n" *
+    "Content-Length: $(ncodeunits(content))\r\n\r\n" *
+    content
 
 @testset "core" begin
     config = Configuration()
@@ -22,14 +22,20 @@ entry(text, language, score=0.0) = WET(
     @test config.vecpath == "minishlab/potion-multilingual-128M"
     @test config.path == "/api/v1/chat"
     @test config.outputpath == "research.md"
-    @test isempty(config.languages)
+    @test config.languages == ["eng", "deu", "rus", "jpn", "zho", "spa", "fra", "por", "ita", "pol"]
     @test Configuration(; outputpath="notes.md", capacity=3).capacity == 3
 
-    source = Channel{typeof(entry("alpha", "eng"))}(3) do channel
-        put!(channel, entry("alpha", "eng"))
-        put!(channel, entry("beta", "zho"))
-        put!(channel, entry("gamma", "zho,eng"))
+    path = tempname() * ".gz"
+    open(path, "w") do file
+        stream = GzipCompressorStream(file)
+        write(stream, entryrecord(repeat("skip me", 500); language="rus"))
+        write(stream, entryrecord("keep me"; language="eng"))
+        write(stream, entryrecord("keep me too"; language="zho,eng"))
+        close(stream)
     end
-    filtered = collect(MonsieurPapin.harvest(Configuration(; capacity=3, languages=["eng"]), source))
+
+    filtered = collect(wets(path; capacity=2, languages=["eng"]))
     @test map(MonsieurPapin.language, filtered) == ["eng", "zho,eng"]
+    channel = wets(path; capacity=2, languages=["eng"])
+    @test @allocations(first(channel)) == 0
 end

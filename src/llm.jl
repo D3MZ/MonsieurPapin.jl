@@ -21,20 +21,6 @@ end
 
 translate(text::AbstractString, language::AbstractString) = translate(text, language, Configuration())
 
-function translate(lines::AbstractVector{<:AbstractString}, language::AbstractString, config::Configuration)
-    translation = deepcopy(config)
-    translation.systemprompt = "You translate text accurately. Preserve line order. Output only the translated lines."
-    translation.input = string("Translate each line into the language identified by the Common Crawl WET language code ", language, ". Preserve line order and output only the translated lines.")
-    strip.(split(chomp(complete(join(lines, "\n"), translation)), '\n'))
-end
-
-translate(lines::AbstractVector{<:AbstractString}, language::AbstractString) = translate(lines, language, Configuration())
-
-function translate(lines::AbstractVector{<:AbstractString}, languages::AbstractVector{<:AbstractString}, config::Configuration)
-    isempty(languages) && return collect(lines)
-    unique(vcat(collect(lines), mapreduce(language -> translate(lines, language, config), vcat, languages; init=String[])))
-end
-
 # Deeply extract content from various response structures
 function extract_content(data)
     # 1. If it's a message array, look for the first message type

@@ -73,61 +73,61 @@ languages(wet::WET) = filter(code -> !isempty(code), strip.(split(language(wet),
 
 # --- High-level API ---
 
-function wets(path::AbstractString; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/")
+function wets(path::AbstractString; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/", languages=nothing)
     isfile(path) && return Channel{WET{urilimit,contentlimit,languagelimit}}(capacity) do channel
-        emit(channel, GzipDecompressorStream(open(path)))
+        emit(channel, GzipDecompressorStream(open(path)), languages)
     end
-    startswith(path, "http") ? wets(URI(path); capacity) : wets(URI(wetroot * path); capacity)
+    startswith(path, "http") ? wets(URI(path); capacity, languages) : wets(URI(wetroot * path); capacity, languages)
 end
 
-function wets(index::URI; capacity=Threads.nthreads() * 10)
+function wets(index::URI; capacity=Threads.nthreads() * 10, languages=nothing)
     Channel{WET{urilimit,contentlimit,languagelimit}}(capacity) do channel
         HTTP.open("GET", string(index)) do stream
             HTTP.startread(stream)
-            emit(channel, GzipDecompressorStream(BufferedInputStream(stream)))
+            emit(channel, GzipDecompressorStream(BufferedInputStream(stream)), languages)
         end
     end
 end
 
-wets(paths::AbstractVector{<:Union{AbstractString,URI}}; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/") =
+wets(paths::AbstractVector{<:Union{AbstractString,URI}}; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/", languages=nothing) =
     Channel{WET{urilimit,contentlimit,languagelimit}}(capacity) do c
-        foreach(p -> foreach(w -> put!(c, w), wets(p; capacity, wetroot)), paths)
+        foreach(p -> foreach(w -> put!(c, w), p isa URI ? wets(p; capacity, languages) : wets(p; capacity, wetroot, languages)), paths)
     end
 
-wets(paths::Channel{T}; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/") where {T<:Union{AbstractString,URI}} =
+wets(paths::Channel{T}; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/", languages=nothing) where {T<:Union{AbstractString,URI}} =
     Channel{WET{urilimit,contentlimit,languagelimit}}(capacity) do c
-        foreach(p -> foreach(w -> put!(c, w), wets(p; capacity, wetroot)), paths)
+        foreach(p -> foreach(w -> put!(c, w), p isa URI ? wets(p; capacity, languages) : wets(p; capacity, wetroot, languages)), paths)
     end
 
 # --- Processing Pipeline ---
 
-function emit(channel, stream::IO)
+function emit(channel, stream::IO, languages)
     line, body = Vector{UInt8}(), Vector{UInt8}(undef, contentlimit)
     sizehint!(line, 256)
     while !isnothing(read!(line, stream))
         matches(line, firstindex(line), warcprefix) || continue
-        entry = record(line, body, stream)
+        entry = record(line, body, stream, languages)
         isnothing(entry) || put!(channel, entry)
     end
 end
 
-function record(line, buffer, stream)
-    kind, address, tongue, moment, bytes = header(line, stream)
-    keep(kind, address, moment, bytes) || return (discard(stream, buffer, bytes); nothing)
+function record(line, buffer, stream, languages)
+    kind, accepted, address, tongue, moment, bytes = header(line, stream, languages)
+    keep(kind, accepted, address, moment, bytes) || return (discard(stream, buffer, bytes); nothing)
     body(address, tongue, moment, bytes, buffer, stream)
 end
 
-function header(line, stream)
-    kind, address, tongue, moment, bytes = false, nothing, nothing, nothing, 0
+function header(line, stream, languages)
+    kind, accepted, address, tongue, moment, bytes = false, isnothing(languages), nothing, nothing, nothing, 0
     while !blank(line)
         kind = kind ? true : isconversion(line)
         address = extract(address, line, uriprefix, Val(urilimit))
-        tongue = extract(tongue, line, languageprefix, Val(languagelimit))
+        tongue, accepted = extract(tongue, accepted, line, languageprefix, Val(languagelimit), languages)
         moment = extract(moment, line, dateprefix)
         bytes = extract(bytes, line, lengthprefix)
-        isnothing(read!(line, stream)) && return (kind, address, tongue, moment, bytes)
+        isnothing(read!(line, stream)) && return (kind, accepted, address, tongue, moment, bytes)
     end
-    (kind, address, tongue, moment, bytes)
+    (kind, accepted, address, tongue, moment, bytes)
 end
 
 function body(address, tongue, moment, bytes, buffer, stream)
@@ -160,17 +160,44 @@ isconversion(line) = (v = linevalue(line, firstindex(line), stop(line), typepref
 
 extract(val::Snippet, line, prefix, limit) = val
 extract(::Nothing, line, prefix, limit) = (b = linevalue(line, firstindex(line), stop(line), prefix); isnothing(b) ? nothing : Snippet(line, first(b), last(b), limit))
+extract(val::Snippet, accepted, line, prefix, limit, languages) = (val, accepted)
+
+function extract(::Nothing, accepted, line, prefix, limit, languages)
+    bounds = linevalue(line, firstindex(line), stop(line), prefix)
+    isnothing(bounds) && return (nothing, accepted)
+    matched = accepted || accepts(languages, line, bounds)
+    matched ? (Snippet(line, first(bounds), last(bounds), limit), matched) : (nothing, matched)
+end
 
 extract(val::DateTime, line, prefix) = val
 extract(::Nothing, line, prefix) = (b = linevalue(line, firstindex(line), stop(line), prefix); isnothing(b) ? nothing : parsedatetime(line, b))
 
 extract(val::Int, line, prefix) = val != 0 ? val : (b = linevalue(line, firstindex(line), stop(line), prefix); isnothing(b) ? 0 : parseint(line, b))
 
-keep(kind, uri, date, len) = kind && !isnothing(uri) && !isnothing(date) && len != 0
+keep(kind, accepted, uri, date, len) = kind && accepted && !isnothing(uri) && !isnothing(date) && len != 0
 
 function linevalue(bytes, start, stop, prefix)
     matches(bytes, start, prefix) || return nothing
     trim(bytes, start + length(prefix), stop)
+end
+
+accepts(::Nothing, bytes, bounds) = true
+
+function accepts(languages::AbstractVector{<:AbstractString}, bytes, bounds)
+    start = first(bounds)
+    stop = last(bounds)
+    while start <= stop
+        tokenstop = start
+        while tokenstop <= stop && bytes[tokenstop] != UInt8(',')
+            tokenstop += 1
+        end
+        token = trim(bytes, start, tokenstop - 1)
+        for code in languages
+            matches(bytes, first(token), last(token), code) && return true
+        end
+        start = tokenstop + 1
+    end
+    false
 end
 
 function parseint(bytes, bounds)
@@ -194,6 +221,14 @@ end
 function matches(bytes, start, prefix)
     stop = start + length(prefix) - 1
     stop <= lastindex(bytes) && @views(bytes[start:stop]) == prefix
+end
+
+function matches(bytes, start, stop, text::AbstractString)
+    stop - start + 1 == ncodeunits(text) || return false
+    for (offset, byte) in enumerate(codeunits(text))
+        bytes[start + offset - 1] == byte || return false
+    end
+    true
 end
 
 function trim(bytes, start, stop)

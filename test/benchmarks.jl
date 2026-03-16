@@ -30,8 +30,54 @@ rate(iterable, seconds) = round(count(iterable) / seconds)
         @test records_per_second >= 25_000
     end
 
-    @testset "Keyword Matching (Aho-Corasick)" begin
-        keywords = ["trading", "strategy", "alpha", "finance", "stock", "market", "price", "signal", "yield", "portfolio"]
+    @testset "wets language filter" begin
+        records = count(wets(wetspath))
+        singlelanguage = ["eng"]
+        manylanguages = Configuration().languages
+        emittedsingle = count(wets(wetspath; languages=singlelanguage))
+        emittedmany = count(wets(wetspath; languages=manylanguages))
+        singlebenchmark = @benchmark sum(_ -> 1, wets($wetspath; languages=$singlelanguage)) samples=1 seconds=5
+        manybenchmark = @benchmark sum(_ -> 1, wets($wetspath; languages=$manylanguages)) samples=1 seconds=5
+        singletime = median(singlebenchmark).time / 1e9
+        manytime = median(manybenchmark).time / 1e9
+        singlerate = round(records / singletime)
+        manyrate = round(records / manytime)
+        display(singlebenchmark)
+        display(manybenchmark)
+        @info "Benchmarking wets language filter" records = records emittedsingle = emittedsingle emittedmany = emittedmany singlelanguage = first(singlelanguage) singlerate = singlerate languagecount = length(manylanguages) manyrate = manyrate
+        @test singlerate > manyrate
+        @test singlebenchmark.allocs <= manybenchmark.allocs
+    end
+
+    @testset "Keyword Matching (Aho-Corasick; Multilingual)" begin
+        keywords = [
+            "trading",
+            "strategy",
+            "finance",
+            "market",
+            "portfolio",
+            "yield",
+            "estrategia de trading",
+            "mercado financiero",
+            "strategie de trading",
+            "marche financier",
+            "handelsstrategie",
+            "finanzmarkt",
+            "strategia di trading",
+            "mercato finanziario",
+            "estrategia de negociacao",
+            "mercado financeiro",
+            "торговая стратегия",
+            "финансовый рынок",
+            "交易策略",
+            "金融市场",
+            "取引戦略",
+            "金融市場",
+            "거래 전략",
+            "금융 시장",
+            "استراتيجية التداول",
+            "السوق المالية",
+        ]
         benchmark = @benchmark sum(_ -> 1, (MonsieurPapin.RustWorker.score(ac, wet) for wet in wets($wetspath))) setup=(ac = AC($keywords)) samples=1 seconds=5
         time = median(benchmark).time / 1e9
         display(benchmark)
@@ -40,8 +86,8 @@ rate(iterable, seconds) = round(count(iterable) / seconds)
         @test records_per_second >= 20_000
     end
 
-    @testset "Deduplication (SimHash)" begin
-        benchmark = @benchmark sum(_ -> 1, (isduplicate(deduper, wet) for wet in wets($wetspath))) setup=(deduper = Deduper(100_000)) samples=1 seconds=5
+    @testset "Deduplication (SimHash; Single threaded)" begin
+        benchmark = @benchmark sum(_ -> 1, (isduplicate(deduper, wet) for wet in wets($wetspath))) setup=(deduper = Deduper(100_000)) samples=1 evals=1 seconds=5
         time = median(benchmark).time / 1e9
         display(benchmark)
         records_per_second = rate(wets(wetspath), time)
