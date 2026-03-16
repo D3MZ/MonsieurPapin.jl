@@ -6,6 +6,7 @@ Base.@kwdef mutable struct Configuration
     vecpath::String = "minishlab/potion-multilingual-128M"
     query::String = ""
     keywords::Vector{String} = String[]
+    languages::Vector{String} = String[]
     dedupe_capacity::Int = 100_000
     baseurl::String = "http://localhost:1234"
     path::String = "/api/v1/chat"
@@ -53,7 +54,7 @@ function bootstrap(config::Configuration, urls::Vector{<:AbstractString}, task::
     try
         clean_json = stripjson(response_text)
         data = JSON.parse(clean_json)
-        config.keywords = convert(Vector{String}, data["keywords"])
+        config.keywords = translate(convert(Vector{String}, data["keywords"]), config.languages, analysis_config)
         config.query = convert(String, data["query"])
         @info "Bootstrap complete." query=config.query keywords_count=length(config.keywords)
     catch e

@@ -22,7 +22,12 @@ Not your ordinary digester: Search the entire internet summarize into a "researc
   - [ ] queue - ingestion and `best!` extraction speed of the `Frontier`.
   - [ ] llm - prompt construction overhead and end-to-end processing latency.
 - [ ] remove query from configuration. add Embedding(URI) constructor that generates an embedding from a webpage.
-
+- [x] Add languages to configuration struct. 
+  - [x] Skip languages not specified.
+  - [x] Add translate(string, language) to `llm.jl`.
+- [ ] `references.jl`
+  - [ ] 
+  - [ ] 
 
 Scoring fitness can be based on:
 1. Relevance
@@ -33,6 +38,14 @@ Scoring fitness can be based on:
 
 
 ## IGNORE BELOW WIP
+
+Initialization
+1. Crawl Reference URLs -> Extract Text -> Translate into [Languages] -> Aggregate into term frequencies -> Build document length normalized score system.
+2. Aho-Corasick
+
+
+1. WET file stream and type creation -> 25K WETs/Sec 
+2. 
 
 language independent filtering that's significantly faster than 25K pages/sec, 
 so I can use an Embedding model (2678 WETS /sec) to do a coarse filter for an LLM to extract real information.

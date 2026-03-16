@@ -12,5 +12,6 @@ using HTTP: URI
     @test config.vecpath == "minishlab/potion-multilingual-128M"
     @test config.path == "/api/v1/chat"
     @test config.outputpath == "research.md"
+    @test isempty(config.languages)
     @test Configuration(; outputpath="notes.md", capacity=3).capacity == 3
 end
