@@ -68,6 +68,8 @@ end
 weturis(config::Configuration) = wetURIs(config.crawlpath; capacity=config.capacity)
 wets(config::Configuration) = wets(weturis(config); capacity=config.capacity, wetroot=config.crawlroot)
 
+matches(config::Configuration, wet::WET) = isempty(config.languages) || any(code -> code in config.languages, languages(wet))
+
 # --- Pipeline Stages ---
 
 """
@@ -84,6 +86,8 @@ function harvest(config::Configuration, entries::Channel{<:WET})
     Threads.@spawn begin
         try
             for wet in entries
+                matches(config, wet) || continue
+
                 # 1. Dedupe
                 isduplicate(deduper, wet) && continue
                 
@@ -132,7 +136,7 @@ end
 
 append!(file, output::AbstractString) = isempty(output) ? file : (write(file, output, "\n"); flush(file); file)
 
-prompt(wet::WET, config::Configuration) = string("URI: ", uri(wet), "\nSCORE: ", wet.score, "\n\n", content(wet))
+prompt(wet::WET, config::Configuration) = string("URI: ", uri(wet), "\nLANGUAGE: ", language(wet), "\nSCORE: ", wet.score, "\n\n", content(wet))
 
 function research(config::Configuration)
     raw_wets = wets(config)

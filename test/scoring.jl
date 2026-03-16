@@ -2,7 +2,7 @@ using BenchmarkTools
 using CodecZlib
 using Test
 
-record(content; language="en", uri="https://example.com") =
+record(content; language="eng", uri="https://example.com") =
     "WARC/1.0\r\n" *
     "WARC-Type: conversion\r\n" *
     "WARC-Target-URI: $uri\r\n" *
@@ -15,7 +15,7 @@ function pages()
     path = tempname() * ".gz"
     open(path, "w") do file
         stream = GzipCompressorStream(file)
-        write(stream, record("kitten dog") * record("banana"))
+        write(stream, record("kitten dog"; language="eng") * record("banana"; language="zho,eng"))
         close(stream)
     end
     MonsieurPapin.wets(path; capacity=2)
@@ -25,11 +25,14 @@ end
     @test :values ∉ fieldnames(MonsieurPapin.Embedding)
     @test !isdefined(MonsieurPapin, :fasttext)
     @test !isdefined(MonsieurPapin, :tokenize)
+    sample = collect(pages())
+    @test MonsieurPapin.language(first(sample)) == "eng"
+    @test MonsieurPapin.language(last(sample)) == "zho,eng"
+    @test MonsieurPapin.languages(last(sample)) == ["zho", "eng"]
 
     if get(ENV, "MONSIEURPAPIN_MODEL2VEC", "false") == "true"
         source = embedding("cat dog")
         banana = embedding("banana")
-        sample = collect(pages())
         records = collect(relevant!(source, pages(); threshold=-1.0))
         scores = map(wet -> wet.score, records)
 

@@ -1,5 +1,15 @@
+using Dates
 using Test
 using HTTP: URI
+
+entry(text, language, score=0.0) = WET(
+    MonsieurPapin.Snippet("https://example.com", Val(32)),
+    MonsieurPapin.Snippet(text, Val(32)),
+    MonsieurPapin.Snippet(language, Val(32)),
+    DateTime(2026, 3, 3),
+    ncodeunits(text),
+    score,
+)
 
 @testset "core" begin
     config = Configuration()
@@ -14,4 +24,12 @@ using HTTP: URI
     @test config.outputpath == "research.md"
     @test isempty(config.languages)
     @test Configuration(; outputpath="notes.md", capacity=3).capacity == 3
+
+    source = Channel{typeof(entry("alpha", "eng"))}(3) do channel
+        put!(channel, entry("alpha", "eng"))
+        put!(channel, entry("beta", "zho"))
+        put!(channel, entry("gamma", "zho,eng"))
+    end
+    filtered = collect(MonsieurPapin.harvest(Configuration(; capacity=3, languages=["eng"]), source))
+    @test map(MonsieurPapin.language, filtered) == ["eng", "zho,eng"]
 end

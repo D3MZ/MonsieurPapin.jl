@@ -14,23 +14,26 @@ end
 
 Snippet(text::AbstractString, ::Val{N}) where {N} = (u = codeunits(text); Snippet(u, firstindex(u), lastindex(u), Val(N)))
 
-struct WET{U,C}
+struct WET{U,C,L}
     uri::Snippet{U}
     content::Snippet{C}
+    language::Snippet{L}
     date::DateTime
     length::Int
     score::Float64
 end
 
-update(value, wet::WET) = WET(wet.uri, wet.content, wet.date, wet.length, value)
+update(value, wet::WET) = WET(wet.uri, wet.content, wet.language, wet.date, wet.length, value)
 
 const urilimit = 4096
 const contentlimit = 12000
+const languagelimit = 64
 
 const warcprefix = codeunits("WARC/1.0")
 const typeprefix = codeunits("WARC-Type:")
 const conversion = codeunits("conversion")
 const uriprefix = codeunits("WARC-Target-URI:")
+const languageprefix = codeunits("WARC-Identified-Content-Language:")
 const dateprefix = codeunits("WARC-Date:")
 const lengthprefix = codeunits("Content-Length:")
 
@@ -65,18 +68,20 @@ end
 uri(wet::WET) = text(wet.uri)
 content(wet::WET) = text(wet.content)
 content(wet::WET, limit::Int) = text(wet.content, limit)
+language(wet::WET) = text(wet.language)
+languages(wet::WET) = filter(code -> !isempty(code), strip.(split(language(wet), ',')))
 
 # --- High-level API ---
 
 function wets(path::AbstractString; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/")
-    isfile(path) && return Channel{WET{urilimit,contentlimit}}(capacity) do channel
+    isfile(path) && return Channel{WET{urilimit,contentlimit,languagelimit}}(capacity) do channel
         emit(channel, GzipDecompressorStream(open(path)))
     end
     startswith(path, "http") ? wets(URI(path); capacity) : wets(URI(wetroot * path); capacity)
 end
 
 function wets(index::URI; capacity=Threads.nthreads() * 10)
-    Channel{WET{urilimit,contentlimit}}(capacity) do channel
+    Channel{WET{urilimit,contentlimit,languagelimit}}(capacity) do channel
         HTTP.open("GET", string(index)) do stream
             HTTP.startread(stream)
             emit(channel, GzipDecompressorStream(BufferedInputStream(stream)))
@@ -85,12 +90,12 @@ function wets(index::URI; capacity=Threads.nthreads() * 10)
 end
 
 wets(paths::AbstractVector{<:Union{AbstractString,URI}}; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/") =
-    Channel{WET{urilimit,contentlimit}}(capacity) do c
+    Channel{WET{urilimit,contentlimit,languagelimit}}(capacity) do c
         foreach(p -> foreach(w -> put!(c, w), wets(p; capacity, wetroot)), paths)
     end
 
 wets(paths::Channel{T}; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/") where {T<:Union{AbstractString,URI}} =
-    Channel{WET{urilimit,contentlimit}}(capacity) do c
+    Channel{WET{urilimit,contentlimit,languagelimit}}(capacity) do c
         foreach(p -> foreach(w -> put!(c, w), wets(p; capacity, wetroot)), paths)
     end
 
@@ -107,24 +112,25 @@ function emit(channel, stream::IO)
 end
 
 function record(line, buffer, stream)
-    kind, address, moment, bytes = header(line, stream)
+    kind, address, tongue, moment, bytes = header(line, stream)
     keep(kind, address, moment, bytes) || return (discard(stream, buffer, bytes); nothing)
-    body(address, moment, bytes, buffer, stream)
+    body(address, tongue, moment, bytes, buffer, stream)
 end
 
 function header(line, stream)
-    kind, address, moment, bytes = false, nothing, nothing, 0
+    kind, address, tongue, moment, bytes = false, nothing, nothing, nothing, 0
     while !blank(line)
         kind = kind ? true : isconversion(line)
         address = extract(address, line, uriprefix, Val(urilimit))
+        tongue = extract(tongue, line, languageprefix, Val(languagelimit))
         moment = extract(moment, line, dateprefix)
         bytes = extract(bytes, line, lengthprefix)
-        isnothing(read!(line, stream)) && return (kind, address, moment, bytes)
+        isnothing(read!(line, stream)) && return (kind, address, tongue, moment, bytes)
     end
-    (kind, address, moment, bytes)
+    (kind, address, tongue, moment, bytes)
 end
 
-function body(address, moment, bytes, buffer, stream)
+function body(address, tongue, moment, bytes, buffer, stream)
     kept = min(bytes, contentlimit)
     readbytes!(stream, buffer, kept) == kept || return nothing
     
@@ -145,7 +151,7 @@ function body(address, moment, bytes, buffer, stream)
     end
 
     bytes > min(bytes, contentlimit) && discard(stream, buffer, bytes - min(bytes, contentlimit))
-    WET(address, Snippet(buffer, firstindex(buffer), kept, Val(contentlimit)), moment, bytes, Inf)
+    WET(address, Snippet(buffer, firstindex(buffer), kept, Val(contentlimit)), something(tongue, Snippet("", Val(languagelimit))), moment, bytes, Inf)
 end
 
 # --- Field Extraction ---

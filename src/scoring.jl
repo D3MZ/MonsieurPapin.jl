@@ -35,14 +35,14 @@ embedding(text::AbstractString; vecpath="minishlab/potion-multilingual-128M") = 
 distance(first::Embedding, second::AbstractString) = RustWorker.score(second, first.handle)
 distance(first::Embedding, second::Embedding) = distance(first, second.text)
 
-function distance(source::Embedding, wet::WET{U,C}) where {U,C}
+function distance(source::Embedding, wet::WET{U,C,L}) where {U,C,L}
     scores = Float64[0.0]
     pointers = UInt[0]
     lengths = UInt[0]
     reference = Ref(wet)
 
     GC.@preserve reference pointers lengths scores begin
-        ptr = Base.unsafe_convert(Ptr{WET{U,C}}, reference) + contentoffset(WET{U,C})
+        ptr = Base.unsafe_convert(Ptr{WET{U,C,L}}, reference) + contentoffset(WET{U,C,L})
         pointers[firstindex(pointers)] = UInt(ptr)
         lengths[firstindex(lengths)] = safe_length(Ptr{UInt8}(ptr), wet.content.length)
         RustWorker.score!(scores, pointers, lengths, source.handle)
@@ -69,10 +69,10 @@ function isrelevant(string1::AbstractString, string2::AbstractString; threshold=
     similarity(string1, string2; vecpath) >= threshold
 end
 
-function RustWorker.score(entry::Union{RustWorker.AC, RustWorker.DAAC}, wet::WET{U,C}) where {U,C}
+function RustWorker.score(entry::Union{RustWorker.AC, RustWorker.DAAC}, wet::WET{U,C,L}) where {U,C,L}
     reference = Ref(wet)
     GC.@preserve reference begin
-        ptr = Base.unsafe_convert(Ptr{WET{U,C}}, reference) + contentoffset(WET{U,C})
+        ptr = Base.unsafe_convert(Ptr{WET{U,C,L}}, reference) + contentoffset(WET{U,C,L})
         RustWorker.score(entry, Ptr{UInt8}(ptr), safe_length(Ptr{UInt8}(ptr), wet.content.length))
     end
 end

@@ -15,7 +15,7 @@ request(config::Configuration, page::AbstractString) = Dict(
 function translate(text::AbstractString, language::AbstractString, config::Configuration)
     translation = deepcopy(config)
     translation.systemprompt = "You translate text accurately. Output only the translation."
-    translation.input = string("Translate the following text into ", language, ". Output only the translated text.")
+    translation.input = string("Translate the following text into the language identified by the Common Crawl WET language code ", language, ". Output only the translated text.")
     complete(text, translation)
 end
 
@@ -24,7 +24,7 @@ translate(text::AbstractString, language::AbstractString) = translate(text, lang
 function translate(lines::AbstractVector{<:AbstractString}, language::AbstractString, config::Configuration)
     translation = deepcopy(config)
     translation.systemprompt = "You translate text accurately. Preserve line order. Output only the translated lines."
-    translation.input = string("Translate each line into ", language, ". Preserve line order and output only the translated lines.")
+    translation.input = string("Translate each line into the language identified by the Common Crawl WET language code ", language, ". Preserve line order and output only the translated lines.")
     strip.(split(chomp(complete(join(lines, "\n"), translation)), '\n'))
 end
 
