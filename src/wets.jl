@@ -36,12 +36,30 @@ const lengthprefix = codeunits("Content-Length:")
 
 # --- Accessors ---
 
+function clean(bytes::AbstractVector{UInt8})
+    kept = length(bytes)
+    while kept > 0 && (bytes[kept] & 0xc0) == 0x80
+        kept -= 1
+    end
+    if kept > 0 && (bytes[kept] & 0x80) != 0
+        # Check if the leading byte indicates a character that fits
+        b = bytes[kept]
+        needed = (b & 0xe0) == 0xc0 ? 2 :
+                 (b & 0xf0) == 0xe0 ? 3 :
+                 (b & 0xf8) == 0xf0 ? 4 : 1
+        if length(bytes) - kept + 1 < needed
+            kept -= 1
+        end
+    end
+    String(bytes[1:kept])
+end
+
 function text(snippet::Snippet{N}, limit::Int=snippet.length) where {N}
     len = min(limit, snippet.length)
     bytes = Vector{UInt8}(undef, len)
     tuple = Ref(snippet.bytes)
     GC.@preserve tuple bytes unsafe_copyto!(pointer(bytes), Base.unsafe_convert(Ptr{UInt8}, tuple), len)
-    String(bytes)
+    clean(bytes)
 end
 
 uri(wet::WET) = text(wet.uri)
@@ -109,7 +127,24 @@ end
 function body(address, moment, bytes, buffer, stream)
     kept = min(bytes, contentlimit)
     readbytes!(stream, buffer, kept) == kept || return nothing
-    bytes > kept && discard(stream, buffer, bytes - kept)
+    
+    if kept > 0 && bytes > kept
+        last_start = kept
+        while last_start > 0 && (buffer[last_start] & 0xc0) == 0x80
+            last_start -= 1
+        end
+        if last_start > 0 && (buffer[last_start] & 0x80) != 0
+            b = buffer[last_start]
+            needed = (b & 0xe0) == 0xc0 ? 2 :
+                     (b & 0xf0) == 0xe0 ? 3 :
+                     (b & 0xf8) == 0xf0 ? 4 : 1
+            if kept - last_start + 1 < needed
+                kept = last_start - 1
+            end
+        end
+    end
+
+    bytes > min(bytes, contentlimit) && discard(stream, buffer, bytes - min(bytes, contentlimit))
     WET(address, Snippet(buffer, firstindex(buffer), kept, Val(contentlimit)), moment, bytes, Inf)
 end
 

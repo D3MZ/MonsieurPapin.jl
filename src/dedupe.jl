@@ -11,32 +11,28 @@ function simhash(bytes::AbstractVector{UInt8})::UInt64
     n = length(bytes)
     n < 3 && return UInt64(0)
 
-    function hash64(h::UInt64)
-        h = (h ⊻ (h >> 33)) * 0xff51afd7ed558ccd
-        h = (h ⊻ (h >> 33)) * 0xc4ceb9fe1a85ec53
-        h = h ⊻ (h >> 33)
-        return h
-    end
+    # Pre-calculate hash constants
+    m1 = 0xff51afd7ed558ccd
+    m2 = 0xc4ceb9fe1a85ec53
 
     @inbounds for i in 1:(n - 2)
-        # Use a more spread-out packing for the shingle
-        h_seed = (UInt64(bytes[i]) << 32) ⊻ (UInt64(bytes[i+1]) << 16) ⊻ UInt64(bytes[i+2])
-        # Add a "positional" salt to reduce sequential bias
-        h = hash64(h_seed ⊻ UInt64(i))
+        h = (UInt64(bytes[i]) << 32) ⊻ (UInt64(bytes[i+1]) << 16) ⊻ UInt64(bytes[i+2])
+        h ⊻= UInt64(i)
+        
+        # Inlined hash64
+        h = (h ⊻ (h >> 33)) * m1
+        h = (h ⊻ (h >> 33)) * m2
+        h ⊻= (h >> 33)
 
-        for j in 0:63
-            if ((h >> j) & 1) == 1
-                v[j+1] += 1
-            else
-                v[j+1] -= 1
-            end
+        for j in 1:64
+            v[j] += ((h >> (j-1)) & 1) == 1 ? 1 : -1
         end
     end
 
     fingerprint = UInt64(0)
-    for j in 0:63
-        if v[j+1] > 0
-            fingerprint |= (UInt64(1) << j)
+    for j in 1:64
+        if v[j] > 0
+            fingerprint |= (UInt64(1) << (j-1))
         end
     end
     return fingerprint
@@ -71,3 +67,12 @@ end
 
 isduplicate(deduper::Deduper, bytes::AbstractVector{UInt8}) = seen!(deduper, simhash(bytes))
 isduplicate(deduper::Deduper, text::AbstractString) = seen!(deduper, simhash(text))
+
+function isduplicate(deduper::Deduper, wet::WET{U,C}) where {U,C}
+    reference = Ref(wet)
+    GC.@preserve reference begin
+        ptr = Base.unsafe_convert(Ptr{WET{U,C}}, reference) + contentoffset(WET{U,C})
+        view = StringView(unsafe_wrap(Vector{UInt8}, Ptr{UInt8}(ptr), wet.content.length))
+        isduplicate(deduper, view)
+    end
+end

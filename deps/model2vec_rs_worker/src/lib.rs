@@ -2,11 +2,13 @@ use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use anyhow::Result;
 use daachorse::DoubleArrayAhoCorasick;
 use jlrs::{error::JlrsError, prelude::*};
-use model2vec_rs::model::StaticModel;
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     slice,
 };
+
+mod model;
+use model::StaticModel;
 
 struct State {
     model: StaticModel,
@@ -40,7 +42,9 @@ fn cosine(left: &[f32], right: &[f32]) -> f64 {
 fn protect<T>(f: impl FnOnce() -> JlrsResult<T>) -> JlrsResult<T> {
     match catch_unwind(AssertUnwindSafe(f)) {
         Ok(value) => value,
-        Err(_) => Err(Box::new(JlrsError::exception("panic in model2vec_rs_worker"))),
+        Err(_) => Err(Box::new(JlrsError::exception(
+            "panic in model2vec_rs_worker",
+        ))),
     }
 }
 
@@ -50,7 +54,7 @@ fn failure(error: impl ToString) -> Box<JlrsError> {
 
 fn open(model: &str, query: &str) -> Result<usize> {
     let model = StaticModel::from_pretrained(model, None, None, None)?;
-    let query = model.encode(&[query.to_owned()]).remove(0);
+    let query = model.encode(&[query.to_owned()])?.remove(0);
     Ok(Box::into_raw(Box::new(State { model, query })) as usize)
 }
 
@@ -69,18 +73,16 @@ fn score(handle: usize, textpointers: &[usize], textlengths: &[usize]) -> Result
     let texts = textpointers
         .iter()
         .zip(textlengths.iter())
-        .map(|(&pointer, &length)| unsafe {
-            std::str::from_utf8_unchecked(slice::from_raw_parts(pointer as *const u8, length)).to_owned()
+        .map(|(&pointer, &length)| {
+            let bytes = unsafe { slice::from_raw_parts(pointer as *const u8, length) };
+            String::from_utf8_lossy(bytes).into_owned()
         })
         .collect::<Vec<_>>();
-    let embeddings = state.model.encode_with_args(&texts, Some(512), texts.len());
-    let mut scores = Vec::with_capacity(embeddings.len());
-
-    for embedding in embeddings.iter() {
-        scores.push(1.0 - cosine(&state.query, embedding));
-    }
-
-    Ok(scores)
+    let embeddings = state.model.encode(&texts)?;
+    Ok(embeddings
+        .into_iter()
+        .map(|embedding| 1.0 - cosine(&state.query, &embedding))
+        .collect())
 }
 
 fn openstate(model: JuliaString, query: JuliaString) -> JlrsResult<usize> {

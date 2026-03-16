@@ -6,6 +6,24 @@ end
 
 contentoffset(::Type{T}) where {T<:WET} = fieldoffset(T, 2) + fieldoffset(fieldtype(T, 2), 1)
 
+function safe_length(ptr::Ptr{UInt8}, len::Int)
+    len <= 0 && return 0
+    last_start = len
+    while last_start > 0 && (unsafe_load(ptr, last_start) & 0xc0) == 0x80
+        last_start -= 1
+    end
+    if last_start > 0 && (unsafe_load(ptr, last_start) & 0x80) != 0
+        b = unsafe_load(ptr, last_start)
+        needed = (b & 0xe0) == 0xc0 ? 2 :
+                 (b & 0xf0) == 0xe0 ? 3 :
+                 (b & 0xf8) == 0xf0 ? 4 : 1
+        if len - last_start + 1 < needed
+            return last_start - 1
+        end
+    end
+    return len
+end
+
 function embedding(text::AbstractString, model::AbstractString)
     value = String(text)
     source = String(model)
@@ -17,15 +35,16 @@ embedding(text::AbstractString; vecpath="minishlab/potion-multilingual-128M") = 
 distance(first::Embedding, second::AbstractString) = RustWorker.score(second, first.handle)
 distance(first::Embedding, second::Embedding) = distance(first, second.text)
 
-function distance(source::Embedding, wet::WET)
+function distance(source::Embedding, wet::WET{U,C}) where {U,C}
     scores = Float64[0.0]
     pointers = UInt[0]
     lengths = UInt[0]
     reference = Ref(wet)
 
     GC.@preserve reference pointers lengths scores begin
-        pointers[firstindex(pointers)] = UInt(Base.unsafe_convert(Ptr{typeof(wet)}, reference)) + contentoffset(typeof(wet))
-        lengths[firstindex(lengths)] = wet.content.length
+        ptr = Base.unsafe_convert(Ptr{WET{U,C}}, reference) + contentoffset(WET{U,C})
+        pointers[firstindex(pointers)] = UInt(ptr)
+        lengths[firstindex(lengths)] = safe_length(Ptr{UInt8}(ptr), wet.content.length)
         RustWorker.score!(scores, pointers, lengths, source.handle)
     end
 
@@ -50,11 +69,11 @@ function isrelevant(string1::AbstractString, string2::AbstractString; threshold=
     similarity(string1, string2; vecpath) >= threshold
 end
 
-function RustWorker.score(entry::Union{RustWorker.AC, RustWorker.DAAC}, wet::WET)
+function RustWorker.score(entry::Union{RustWorker.AC, RustWorker.DAAC}, wet::WET{U,C}) where {U,C}
     reference = Ref(wet)
     GC.@preserve reference begin
-        ptr = Base.unsafe_convert(Ptr{UInt8}, reference) + contentoffset(typeof(wet))
-        RustWorker.score(entry, ptr, wet.content.length)
+        ptr = Base.unsafe_convert(Ptr{WET{U,C}}, reference) + contentoffset(WET{U,C})
+        RustWorker.score(entry, Ptr{UInt8}(ptr), safe_length(Ptr{UInt8}(ptr), wet.content.length))
     end
 end
 
@@ -63,7 +82,7 @@ function score(source::Embedding, wet::WET)
     update(s, wet)
 end
 
-function score!(scores, pointers, lengths, source::Embedding, batch)
+function score!(scores, pointers, lengths, source::Embedding, batch::AbstractVector{T}) where {T<:WET}
     resize!(scores, length(batch))
     resize!(pointers, length(batch))
     resize!(lengths, length(batch))
@@ -71,8 +90,9 @@ function score!(scores, pointers, lengths, source::Embedding, batch)
 
     GC.@preserve references pointers lengths scores begin
         foreach(eachindex(batch)) do i
-            pointers[i] = UInt(Base.unsafe_convert(Ptr{typeof(batch[i])}, references[i])) + contentoffset(typeof(batch[i]))
-            lengths[i] = batch[i].content.length
+            ptr = Base.unsafe_convert(Ptr{T}, references[i]) + contentoffset(T)
+            pointers[i] = UInt(ptr)
+            lengths[i] = safe_length(Ptr{UInt8}(ptr), batch[i].content.length)
         end
 
         RustWorker.score!(scores, pointers, lengths, source.handle)
