@@ -6,7 +6,7 @@ Base.@kwdef mutable struct Configuration
     vecpath::String = "minishlab/potion-multilingual-128M"
     query::String = ""
     keywords::Vector{String} = String[]
-    languages::Vector{String} = String[]
+    languages::Vector{String} = ["eng", "deu", "rus", "jpn", "zho", "spa", "fra", "por", "ita", "pol"]
     dedupe_capacity::Int = 100_000
     baseurl::String = "http://localhost:1234"
     path::String = "/api/v1/chat"
@@ -54,7 +54,7 @@ function bootstrap(config::Configuration, urls::Vector{<:AbstractString}, task::
     try
         clean_json = stripjson(response_text)
         data = JSON.parse(clean_json)
-        config.keywords = translate(convert(Vector{String}, data["keywords"]), config.languages, analysis_config)
+        config.keywords = convert(Vector{String}, data["keywords"])
         config.query = convert(String, data["query"])
         @info "Bootstrap complete." query=config.query keywords_count=length(config.keywords)
     catch e
@@ -66,9 +66,7 @@ function bootstrap(config::Configuration, urls::Vector{<:AbstractString}, task::
 end
 
 weturis(config::Configuration) = wetURIs(config.crawlpath; capacity=config.capacity)
-wets(config::Configuration) = wets(weturis(config); capacity=config.capacity, wetroot=config.crawlroot)
-
-matches(config::Configuration, wet::WET) = isempty(config.languages) || any(code -> code in config.languages, languages(wet))
+wets(config::Configuration) = wets(weturis(config); capacity=config.capacity, wetroot=config.crawlroot, languages=config.languages)
 
 # --- Pipeline Stages ---
 
@@ -86,8 +84,6 @@ function harvest(config::Configuration, entries::Channel{<:WET})
     Threads.@spawn begin
         try
             for wet in entries
-                matches(config, wet) || continue
-
                 # 1. Dedupe
                 isduplicate(deduper, wet) && continue
                 

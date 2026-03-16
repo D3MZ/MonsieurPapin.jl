@@ -22,6 +22,8 @@ one(_) = 1
     path = joinpath(dirname(@__DIR__), "data", "warc.wet.gz")
     channel = wets(path)
     @test @allocations(first(channel)) == 0
+    filtered = wets(path; languages=["eng"])
+    @test @allocations(first(filtered)) == 0
     @test sum(one, wets(path)) == 21_465
     @test sum(one, wets([path, path])) == 2 * sum(one, wets(path))
 

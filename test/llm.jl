@@ -51,11 +51,7 @@ excerpt(text, language, score=0.0) = WET(
     end
 
     translated = llmserver(; seed="seed article") do payload
-        input = payload["input"]
-        message =
-            occursin("Analyze the following Task and Seed Content.", input) ?
-            "{\"keywords\":[\"breakout\",\"trend\"],\"query\":\"trading strategy\"}" :
-            "cassure\ntendance"
+        message = "{\"keywords\":[\"breakout\",\"trend\"],\"query\":\"trading strategy\"}"
         Dict("output" => [Dict("type" => "message", "content" => message)])
     end
 
@@ -63,23 +59,25 @@ excerpt(text, language, score=0.0) = WET(
         config = Configuration(; baseurl=translated.baseurl, languages=["fra"])
         MonsieurPapin.bootstrap(config, [translated.baseurl * "/seed"], "Find strategies")
         @test config.query == "trading strategy"
-        @test config.keywords == ["breakout", "trend", "cassure", "tendance"]
-        take!(translated.requests)
+        @test config.keywords == ["breakout", "trend"]
         request = take!(translated.requests)
-        @test request["input"] == "Translate each line into the language identified by the Common Crawl WET language code fra. Preserve line order and output only the translated lines.\n\nbreakout\ntrend"
+        @test occursin("Analyze the following Task and Seed Content.", request["input"])
+        @test !isready(translated.requests)
     finally
         close(translated.server)
     end
 
-    untranslated = llmserver(; seed="seed article") do _
-        Dict("output" => [Dict("type" => "message", "content" => "{\"keywords\":[\"breakout\",\"trend\"],\"query\":\"trading strategy\"}")])
+    untranslated = llmserver(; seed="seed article") do payload
+        message = "{\"keywords\":[\"breakout\",\"trend\"],\"query\":\"trading strategy\"}"
+        Dict("output" => [Dict("type" => "message", "content" => message)])
     end
 
     try
-        config = Configuration(; baseurl=untranslated.baseurl)
+        config = Configuration(; baseurl=untranslated.baseurl, languages=["eng"])
         MonsieurPapin.bootstrap(config, [untranslated.baseurl * "/seed"], "Find strategies")
         @test config.keywords == ["breakout", "trend"]
-        take!(untranslated.requests)
+        request = take!(untranslated.requests)
+        @test occursin("Analyze the following Task and Seed Content.", request["input"])
         @test !isready(untranslated.requests)
     finally
         close(untranslated.server)
