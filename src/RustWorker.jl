@@ -42,22 +42,10 @@ mutable struct AC
     handle::UInt
 end
 
-mutable struct DAAC
-    handle::UInt
-end
-
 function AC(patterns::Vector{<:AbstractString})
     load()
     joined = join(patterns, '\x1F')
     entry = AC(call(:build_aho_corasick, joined))
-    finalizer(close, entry)
-    entry
-end
-
-function DAAC(patterns::Vector{<:AbstractString})
-    load()
-    joined = join(patterns, '\x1F')
-    entry = DAAC(call(:build_daachorse, joined))
     finalizer(close, entry)
     entry
 end
@@ -69,22 +57,11 @@ function Base.close(entry::AC)
     entry
 end
 
-function Base.close(entry::DAAC)
-    entry.handle == 0 && return entry
-    call(:close_daachorse, entry.handle)
-    entry.handle = 0
-    entry
-end
-
 function score(entry::AC, pointer::Ptr{UInt8}, length::Integer)::UInt32
     call(:match_aho_corasick, entry.handle, UInt(pointer), UInt(length))
 end
 
-function score(entry::DAAC, pointer::Ptr{UInt8}, length::Integer)::UInt32
-    call(:match_daachorse, entry.handle, UInt(pointer), UInt(length))
-end
-
-function score(entry::Union{AC, DAAC}, text::AbstractString)::UInt32
+function score(entry::AC, text::AbstractString)::UInt32
     score(entry, pointer(text), ncodeunits(text))
 end
 
