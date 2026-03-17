@@ -1,24 +1,27 @@
-using Base.Order: By, ReverseOrdering
+using Base.Order: By, ReverseOrdering, lt
 import DataStructures: heapify!
 
-struct WETQueue{Value, Ordering<:Base.Ordering}
-    heap::BinaryHeap{Value, Ordering}
+struct WETQueue{Value, Ranking<:Base.Ordering, HeapOrdering<:Base.Ordering}
+    heap::BinaryHeap{Value, HeapOrdering}
     capacity::Int
+    ranking::Ranking
 end
 
 score(wet::WET) = wet.score
 
-function WETQueue(capacity::Int, ::Type{Value}) where {Value<:WET}
-    WETQueue(BinaryHeap{Value}(ReverseOrdering(By(score))), capacity)
+function WETQueue(capacity::Int, ::Type{Value}, ranking::Ranking=By(score)) where {Value<:WET, Ranking<:Base.Ordering}
+    WETQueue(BinaryHeap{Value}(ReverseOrdering(ranking)), capacity, ranking)
 end
 
 Base.length(queue::WETQueue) = length(queue.heap)
 Base.isempty(queue::WETQueue) = isempty(queue.heap)
+Base.eltype(::WETQueue{Value}) where {Value} = Value
 isfull(queue::WETQueue) = length(queue) >= queue.capacity
+better(queue::WETQueue, left::WET, right::WET) = lt(queue.ranking, left, right)
 
 function insert!(queue::WETQueue{<:WET}, item::WET)
     !isfull(queue) && return push!(queue.heap, item)
-    score(item) < score(first(queue.heap)) || return queue.heap
+    better(queue, item, first(queue.heap)) || return queue.heap
     pop!(queue.heap)
     push!(queue.heap, item)
 end
@@ -26,11 +29,11 @@ end
 insert!(queue::WETQueue{<:WET}, channel::Channel{<:WET}) =
     foreach(item -> insert!(queue, item), channel)
 
-function bestindex(values)
+function bestindex(values, ranking)
     index = firstindex(values)
     best = first(values)
     for step in Iterators.drop(eachindex(values), 1)
-        score(values[step]) < score(best) || continue
+        lt(ranking, values[step], best) || continue
         index = step
         best = values[step]
     end
@@ -39,7 +42,7 @@ end
 
 function Base.pop!(queue::WETQueue)
     values = queue.heap.valtree
-    index = bestindex(values)
+    index = bestindex(values, queue.ranking)
     best = values[index]
     deleteat!(values, index)
     isempty(values) || heapify!(values, queue.heap.ordering)
@@ -48,8 +51,8 @@ end
 
 best!(queue::WETQueue) = isempty(queue) ? nothing : pop!(queue)
 
-function best(source; capacity=10)
-    queue = WETQueue(capacity, eltype(source))
+function best(source; capacity=10, ranking=By(score))
+    queue = WETQueue(capacity, eltype(source), ranking)
     insert!(queue, source)
     best!(queue)
 end

@@ -16,6 +16,7 @@ struct State {
 
 struct ACState {
     ac: AhoCorasick,
+    weights: Option<Vec<f64>>,
 }
 
 fn cosine(left: &[f32], right: &[f32]) -> f64 {
@@ -121,7 +122,24 @@ fn build_aho_corasick(patterns: JuliaString) -> JlrsResult<usize> {
             .ascii_case_insensitive(true)
             .build(patterns_vec)
             .map_err(failure)?;
-        Ok(Box::into_raw(Box::new(ACState { ac })) as usize)
+        Ok(Box::into_raw(Box::new(ACState { ac, weights: None })) as usize)
+    })
+}
+
+fn build_weighted_aho_corasick(
+    patterns: JuliaString,
+    weights: TypedVector<f64>,
+) -> JlrsResult<usize> {
+    protect(|| {
+        let patterns_str = patterns.as_str()?;
+        let patterns_vec: Vec<String> = patterns_str.split('\x1F').map(|s| s.to_owned()).collect();
+        let weights = weights.track_shared()?;
+        let values = weights.bits_data().as_slice().to_vec();
+        let ac = AhoCorasickBuilder::new()
+            .ascii_case_insensitive(true)
+            .build(patterns_vec)
+            .map_err(failure)?;
+        Ok(Box::into_raw(Box::new(ACState { ac, weights: Some(values) })) as usize)
     })
 }
 
@@ -130,6 +148,23 @@ fn match_aho_corasick(handle: usize, pointer: usize, length: usize) -> JlrsResul
         let state = unsafe { &*(handle as *const ACState) };
         let haystack = unsafe { slice::from_raw_parts(pointer as *const u8, length) };
         Ok(state.ac.find_iter(haystack).count() as u32)
+    })
+}
+
+fn match_weighted_aho_corasick(
+    handle: usize,
+    pointer: usize,
+    length: usize,
+) -> JlrsResult<f64> {
+    protect(|| {
+        let state = unsafe { &*(handle as *const ACState) };
+        let haystack = unsafe { slice::from_raw_parts(pointer as *const u8, length) };
+        let weights = state.weights.as_ref().unwrap();
+        Ok(state
+            .ac
+            .find_iter(haystack)
+            .map(|m| weights[m.pattern().as_usize()])
+            .sum())
     })
 }
 
@@ -148,6 +183,8 @@ julia_module! {
     fn closestate(handle: usize) -> Nothing;
     fn scorebatch(handle: usize, textpointers: TypedVector<usize>, textlengths: TypedVector<usize>, scores: TypedVector<f64>) -> JlrsResult<Nothing> as scorebatch!;
     fn build_aho_corasick(patterns: JuliaString) -> JlrsResult<usize>;
+    fn build_weighted_aho_corasick(patterns: JuliaString, weights: TypedVector<f64>) -> JlrsResult<usize>;
     fn match_aho_corasick(handle: usize, pointer: usize, length: usize) -> JlrsResult<u32>;
+    fn match_weighted_aho_corasick(handle: usize, pointer: usize, length: usize) -> JlrsResult<f64>;
     fn close_aho_corasick(handle: usize) -> Nothing;
 }

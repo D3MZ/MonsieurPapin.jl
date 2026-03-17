@@ -26,9 +26,13 @@ end
     @test !isdefined(MonsieurPapin, :fasttext)
     @test !isdefined(MonsieurPapin, :tokenize)
     sample = collect(pages())
+    matcher = AC(Dict("kitten" => 1.0, "dog" => 2.0, "banana" => 4.0))
     @test MonsieurPapin.language(first(sample)) == "eng"
     @test MonsieurPapin.language(last(sample)) == "zho,eng"
     @test MonsieurPapin.languages(last(sample)) == ["zho", "eng"]
+    @test MonsieurPapin.RustWorker.score(matcher, "kitten dog dog") == 5.0
+    @test MonsieurPapin.RustWorker.score(matcher, first(sample)) == 3.0
+    @test MonsieurPapin.RustWorker.score(matcher, last(sample)) == 4.0
 
     if get(ENV, "MONSIEURPAPIN_MODEL2VEC", "false") == "true"
         source = embedding("cat dog")

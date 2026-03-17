@@ -10,12 +10,16 @@ Base.@kwdef mutable struct Configuration
     dedupe_capacity::Int = 100_000
     baseurl::String = "http://localhost:1234"
     path::String = "/api/v1/chat"
-    model::String = "qwen/qwen3.5-35b-a3b"
+    model::String = "qwen/qwen3.5-9b"
     password::String = ""
     systemprompt::String = "If a trading strategy exists then write a small description about it and the trading strategy as pseudo code wrapped in a code fence, otherwise do not output anything."
     input::String = "Evaluate this page excerpt for trading strategy relevance and follow the output rule."
     outputpath::String = "research.md"
     timeoutseconds::Int = 120
+end
+
+struct TokenWeights
+    weights::Dict{String,Float64}
 end
 
 function fetchseed(url::AbstractString)
@@ -26,6 +30,25 @@ function fetchseed(url::AbstractString)
         @warn "Failed to fetch $url: $e"
         return ""
     end
+end
+
+seed(urls::Vector{<:AbstractString}) = join(filter(page -> !isempty(page), fetchseed.(urls)), "\n\n")
+query(page::AbstractString; limit=2_000) = first(page, min(limit, length(page)))
+normalize(page::AbstractString) = lowercase(Base.Unicode.normalize(page, :NFKC))
+tokens(page::AbstractString) = [entry.match for entry in eachmatch(r"[\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}]|[\p{L}\p{N}]+", normalize(page))]
+
+function counts(page::AbstractString)
+    counter = Dict{String,Int}()
+    foreach(tokens(page)) do token
+        counter[token] = get(counter, token, 0) + 1
+    end
+    counter
+end
+
+function weights(page::AbstractString; capacity=128)
+    ranked = sort!(collect(counts(page)); by=entry -> (-last(entry), first(entry)))
+    limited = first(ranked, min(capacity, length(ranked)))
+    TokenWeights(Dict(first(entry) => 1 / sqrt(last(entry)) for entry in limited))
 end
 
 function bootstrap(config::Configuration, urls::Vector{<:AbstractString}, task::AbstractString)
@@ -107,6 +130,26 @@ function harvest(config::Configuration, entries::Channel{<:WET})
     out
 end
 
+function harvest(config::Configuration, entries::Channel{<:WET}, source::TokenWeights; capacity=10)
+    shortlist = WETQueue(capacity, eltype(entries), ReverseOrdering(By(score)))
+    isempty(source.weights) && return shortlist
+    deduper = Deduper(config.dedupe_capacity)
+    ac = AC(source.weights)
+
+    try
+        for wet in entries
+            isduplicate(deduper, wet) && continue
+            value = RustWorker.score(ac, wet)
+            value > 0 || continue
+            insert!(shortlist, update(value, wet))
+        end
+    finally
+        close(ac)
+    end
+
+    shortlist
+end
+
 """
     semantic(config, entries) -> WETQueue
 
@@ -128,11 +171,24 @@ function semantic(config::Configuration, entries::Channel{<:WET})
     shortlist
 end
 
+function semantic(config::Configuration, entries::WETQueue, text::AbstractString; capacity=10)
+    shortlist = WETQueue(capacity, eltype(entries))
+    isempty(entries) && return shortlist
+    source = embedding(query(text); vecpath=config.vecpath)
+
+    while !isempty(entries)
+        insert!(shortlist, score(source, best!(entries)))
+    end
+
+    shortlist
+end
+
 # --- Final Orchestration ---
 
 append!(file, output::AbstractString) = isempty(output) ? file : (write(file, output, "\n"); flush(file); file)
 
 prompt(wet::WET, config::Configuration) = string("URI: ", uri(wet), "\nLANGUAGE: ", language(wet), "\nSCORE: ", wet.score, "\n\n", content(wet))
+prompt(wet::WET, ::Val{:local}) = string("SOURCE URL: ", uri(wet), "\nLANGUAGE: ", language(wet), "\nDISTANCE: ", wet.score, "\n\nPAGE EXCERPT:\n", content(wet))
 
 function research(config::Configuration)
     raw_wets = wets(config)
@@ -159,5 +215,29 @@ function research(config::Configuration)
             end
         end
         @info "Research complete."
+    end
+end
+
+function research(config::Configuration, urls::Vector{<:AbstractString}, wetpath::AbstractString)
+    Threads.@spawn begin
+        source = seed(urls)
+        candidates = harvest(config, wets(wetpath; capacity=config.capacity, languages=config.languages), weights(source))
+        retained = length(candidates)
+        shortlist = semantic(config, candidates, source)
+        report = deepcopy(config)
+        report.systemprompt = "Write a 1-2 sentence description of the strategy or indicator with the source URL, and write a small pseudo Julia code that describes it. If no strategy or indicator is present, output nothing."
+        report.input = "Review this page excerpt and follow the output rule."
+        entries = length(shortlist)
+
+        open(config.outputpath, "w") do file
+            @info "Local research shortlist ready." candidates=retained entries=entries outputpath=config.outputpath
+            while !isempty(shortlist)
+                wet = best!(shortlist)
+                @info "Analyzing local page" uri=uri(wet) score=wet.score
+                append!(file, complete(prompt(wet, Val(:local)), report))
+            end
+        end
+
+        @info "Local research complete." outputpath=config.outputpath entries=entries
     end
 end

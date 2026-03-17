@@ -38,14 +38,23 @@ mutable struct Model
     handle::UInt
 end
 
-mutable struct AC
+mutable struct AC{T}
     handle::UInt
 end
 
 function AC(patterns::Vector{<:AbstractString})
     load()
     joined = join(patterns, '\x1F')
-    entry = AC(call(:build_aho_corasick, joined))
+    entry = AC{UInt32}(call(:build_aho_corasick, joined))
+    finalizer(close, entry)
+    entry
+end
+
+function AC(weights::AbstractDict{<:AbstractString,<:Real})
+    load()
+    patterns = collect(keys(weights))
+    values = Float64[weights[pattern] for pattern in patterns]
+    entry = AC{Float64}(call(:build_weighted_aho_corasick, join(patterns, '\x1F'), values))
     finalizer(close, entry)
     entry
 end
@@ -57,11 +66,15 @@ function Base.close(entry::AC)
     entry
 end
 
-function score(entry::AC, pointer::Ptr{UInt8}, length::Integer)::UInt32
+function score(entry::AC{UInt32}, pointer::Ptr{UInt8}, length::Integer)::UInt32
     call(:match_aho_corasick, entry.handle, UInt(pointer), UInt(length))
 end
 
-function score(entry::AC, text::AbstractString)::UInt32
+function score(entry::AC{Float64}, pointer::Ptr{UInt8}, length::Integer)::Float64
+    call(:match_weighted_aho_corasick, entry.handle, UInt(pointer), UInt(length))
+end
+
+function score(entry::AC, text::AbstractString)
     score(entry, pointer(text), ncodeunits(text))
 end
 
