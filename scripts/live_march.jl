@@ -7,88 +7,174 @@ crawlindex() = URI("https://data.commoncrawl.org/crawl-data/CC-MAIN-2025-13/wet.
 outputpath() = "research.md"
 filecount() = 100_000
 shortlistsize() = 10
-excerptsize() = 2_000
+excerptsize() = 12_000
+languages() = ["eng"]
+wettype() = WET{4096, 12000, 64}
 
-function shortlist(queue, candidate, ranking)
-    isnothing(queue) ? WETQueue(shortlistsize(), typeof(candidate), ranking) : queue
-end
+resulttype() = NamedTuple{(:wet, :text), Tuple{wettype(), String}}
+elapsed(started) = round(time() - started; digits=2)
 
-function harvest(config, urls; limitseconds=Inf)
-    started = time()
+function harvest(config, urls; limitseconds=Inf, started=time())
     seedtext = MonsieurPapin.seed(urls)
     matcher = AC(MonsieurPapin.weights(seedtext).weights)
     deduper = Deduper(config.dedupe_capacity)
     progress = Progress(filecount(); desc="WET files")
-    queue = nothing
-    processedfiles = 0
+    processedfiles = Ref(0)
+    firstcandidate = Ref(true)
+    candidates = Channel{wettype()}(config.capacity) do output
+        try
+            for path in wetURIs(config.crawlpath; capacity=1)
+                time() - started < limitseconds || break
+                processedfiles[] += 1
 
-    try
-        for path in wetURIs(config.crawlpath; capacity=1)
-            time() - started < limitseconds || break
-            processedfiles += 1
-
-            try
-                for wet in wets(String(path); capacity=1, wetroot=config.crawlroot, languages=config.languages)
-                    isduplicate(deduper, wet) && continue
-                    value = MonsieurPapin.RustWorker.score(matcher, wet)
-                    value > 0 || continue
-                    candidate = MonsieurPapin.update(value, wet)
-                    queue = shortlist(queue, candidate, ReverseOrdering(By(MonsieurPapin.score)))
-                    MonsieurPapin.insert!(queue, candidate)
+                try
+                    for wet in wets(String(path); capacity=1, wetroot=config.crawlroot, languages=config.languages)
+                        isduplicate(deduper, wet) && continue
+                        value = MonsieurPapin.RustWorker.score(matcher, wet)
+                        value > 0 || continue
+                        if firstcandidate[]
+                            firstcandidate[] = false
+                            @info "First AC candidate" seconds = elapsed(started) uri = MonsieurPapin.uri(wet) score = value
+                        end
+                        put!(output, MonsieurPapin.update(value, wet))
+                    end
+                catch error
+                    @warn "Failed to process WET file" path = String(path) error
                 end
-            catch error
-                @warn "Failed to process WET file" path = String(path) error
-            end
 
-            next!(progress)
+                next!(progress)
+            end
+        finally
+            finish!(progress)
+            close(matcher)
         end
-    finally
-        finish!(progress)
-        close(matcher)
     end
 
-    @info "Harvest complete" processedfiles candidates = isnothing(queue) ? 0 : length(queue)
-    (seedtext = seedtext, queue = queue, processedfiles = processedfiles)
+    (seedtext = seedtext, candidates = candidates, processedfiles = processedfiles)
 end
 
-function semantic(config, seedtext, queue)
-    isnothing(queue) && return nothing
-    shortlist = MonsieurPapin.semantic(config, queue, seedtext; capacity=shortlistsize())
-    @info "Semantic complete" entries = length(shortlist)
-    shortlist
+function semantic(config, seedtext, candidates)
+    source = embedding(MonsieurPapin.query(seedtext); vecpath=config.vecpath)
+    relevant!(source, candidates; capacity=max(Threads.nthreads() * 10, 1), threshold=-1.0)
 end
 
-function report(config, queue)
+function page(wet)
+    string(
+        "SOURCE URL: ", MonsieurPapin.uri(wet),
+        "\nLANGUAGE: ", MonsieurPapin.language(wet),
+        "\nDISTANCE: ", wet.score,
+        "\n\nPAGE EXCERPT:\n", MonsieurPapin.content(wet, excerptsize()),
+    )
+end
+
+function consume!(requests, responses, config, started)
     llm = deepcopy(config)
     llm.systemprompt = "Write a 1-2 sentence description of the strategy or indicator with the source URL, and write a small pseudo Julia code that describes it. If no strategy or indicator is present, output nothing."
     llm.input = "Review this page excerpt and follow the output rule."
+    firstrequest = Ref(true)
 
-    open(config.outputpath, "w") do file
-        isnothing(queue) && return nothing
-        while !isempty(queue)
-            wet = best!(queue)
+    while true
+        wet = take!(requests)
+        wet === nothing && break
+        try
+            if firstrequest[]
+                firstrequest[] = false
+                @info "First LLM request" seconds = elapsed(started) uri = MonsieurPapin.uri(wet) score = wet.score
+            end
             @info "Analyzing live page" uri = MonsieurPapin.uri(wet) score = wet.score
-            page = string(
-                "SOURCE URL: ", MonsieurPapin.uri(wet),
-                "\nLANGUAGE: ", MonsieurPapin.language(wet),
-                "\nDISTANCE: ", wet.score,
-                "\n\nPAGE EXCERPT:\n", MonsieurPapin.content(wet, excerptsize()),
-            )
-            MonsieurPapin.append!(file, complete(page, llm))
+            put!(responses, (wet = wet, text = complete(page(wet), llm)))
+        catch error
+            @info "llm request failed" error
+            put!(responses, (wet = wet, text = ""))
         end
     end
 
     nothing
 end
 
+function shortlist(queue, wet)
+    isnothing(queue) ? WETQueue(shortlistsize(), typeof(wet)) : queue
+end
+
+function dispatch!(queue, requests, submitted)
+    while !isnothing(queue) && !isempty(queue) && submitted[] < shortlistsize() && !isfull(requests)
+        put!(requests, best!(queue))
+        submitted[] += 1
+    end
+    nothing
+end
+
+function write!(file, result)
+    isempty(result.text) && return 0
+    MonsieurPapin.append!(file, result.text)
+    1
+end
+
+function collect!(responses, file, completed, written)
+    while isready(responses)
+        completed[] += 1
+        written[] += write!(file, take!(responses))
+    end
+    nothing
+end
+
+function collect!(responses, file, completed, written, ::Val{:blocking})
+    completed[] += 1
+    written[] += write!(file, take!(responses))
+    collect!(responses, file, completed, written)
+    nothing
+end
+
+function drain!(queue, requests, responses, submitted, completed, written, file)
+    while completed[] < submitted[] || (submitted[] < shortlistsize() && !isnothing(queue) && !isempty(queue))
+        dispatch!(queue, requests, submitted)
+        completed[] < submitted[] ? collect!(responses, file, completed, written, Val(:blocking)) : collect!(responses, file, completed, written)
+    end
+    nothing
+end
+
+function report(config, scored, started)
+    requests = Channel{Union{Nothing, wettype()}}(1)
+    responses = Channel{resulttype()}(shortlistsize())
+    submitted = Ref(0)
+    completed = Ref(0)
+    written = Ref(0)
+    firstresult = Ref(true)
+    consumer = Threads.@spawn consume!(requests, responses, config, started)
+    queue = nothing
+
+    open(config.outputpath, "w") do file
+        try
+            for wet in scored
+                if firstresult[]
+                    firstresult[] = false
+                    @info "First semantic result" seconds = elapsed(started) uri = MonsieurPapin.uri(wet) score = wet.score
+                end
+                queue = shortlist(queue, wet)
+                MonsieurPapin.insert!(queue, wet)
+                dispatch!(queue, requests, submitted)
+                collect!(responses, file, completed, written)
+            end
+            drain!(queue, requests, responses, submitted, completed, written, file)
+        finally
+            put!(requests, nothing)
+            wait(consumer)
+            collect!(responses, file, completed, written)
+        end
+    end
+
+    (submitted = submitted[], completed = completed[], written = written[])
+end
+
 function run(; limitseconds=Inf)
-    config = Configuration(; capacity=1, crawlpath=crawlindex(), outputpath=outputpath())
+    started = time()
+    config = Configuration(; capacity=1, crawlpath=crawlindex(), outputpath=outputpath(), languages=languages())
     urls = seedurls()
-    @info "Starting live March crawl" urls crawlpath = string(config.crawlpath) outputpath = config.outputpath limitseconds
-    harvested = harvest(config, urls; limitseconds)
-    queue = semantic(config, harvested.seedtext, harvested.queue)
-    report(config, queue)
-    @info "Live March crawl complete" processedfiles = harvested.processedfiles outputpath = config.outputpath entries = isnothing(queue) ? 0 : length(queue)
+    @info "Starting live March crawl" urls crawlpath = string(config.crawlpath) outputpath = config.outputpath languages = config.languages limitseconds
+    harvested = harvest(config, urls; limitseconds, started)
+    scored = semantic(config, harvested.seedtext, harvested.candidates)
+    results = report(config, scored, started)
+    @info "Live March crawl complete" processedfiles = harvested.processedfiles[] outputpath = config.outputpath submitted = results.submitted completed = results.completed written = results.written
     nothing
 end
 
