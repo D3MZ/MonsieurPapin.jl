@@ -1,4 +1,4 @@
-function wetURIs(path::AbstractString; delimiator=codeunits("\n")[1], capacity=4)
+function wetURIs(path::AbstractString; delimiator=codeunits("\n")[1], capacity=Threads.nthreads()*2)
     Channel{StringView}(capacity) do uris
         open(path) do file
             stream = GzipDecompressorStream(file)
@@ -9,7 +9,7 @@ function wetURIs(path::AbstractString; delimiator=codeunits("\n")[1], capacity=4
     end
 end
 
-function wetURIs(index::URI; delimiator=codeunits("\n")[1], capacity=4)
+function wetURIs(index::URI; delimiator=codeunits("\n")[1], capacity=Threads.nthreads()*2)
     Channel{StringView}(capacity) do uris
         open(`curl -L -s --fail $(string(index))`) do stream
             gzip = GzipDecompressorStream(BufferedInputStream(stream))
