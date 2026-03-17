@@ -1,3 +1,4 @@
+using CodecZlib
 using Dates
 using HTTP
 using JSON
@@ -24,6 +25,27 @@ excerpt(text, language, score=0.0) = WET(
     ncodeunits(text),
     score,
 )
+
+entryrecord(content; language="eng", uri="https://example.com") =
+    "WARC/1.0\r\n" *
+    "WARC-Type: conversion\r\n" *
+    "WARC-Target-URI: $uri\r\n" *
+    "WARC-Date: 2026-03-03T00:00:00Z\r\n" *
+    "WARC-Identified-Content-Language: $language\r\n" *
+    "Content-Length: $(ncodeunits(content))\r\n\r\n" *
+    content
+
+function wetpath(records...)
+    path = tempname() * ".gz"
+    open(path, "w") do file
+        stream = GzipCompressorStream(file)
+        foreach(records) do record
+            write(stream, record)
+        end
+        close(stream)
+    end
+    path
+end
 
 @testset "llm" begin
     service = llmserver() do payload
@@ -81,5 +103,50 @@ excerpt(text, language, score=0.0) = WET(
         @test !isready(untranslated.requests)
     finally
         close(untranslated.server)
+    end
+
+    emptyservice = llmserver(; seed="<html><body>Relative strength index momentum oscillator trading indicator overbought oversold</body></html>") do payload
+        Dict("output" => [Dict("type" => "message", "content" => "")])
+    end
+
+    try
+        outputpath = tempname()
+        config = Configuration(; baseurl=emptyservice.baseurl, outputpath=outputpath, languages=["eng"])
+        task = MonsieurPapin.research(config, [emptyservice.baseurl * "/seed"], wetpath(entryrecord("Gardening and cooking only."; uri="https://example.com/none")))
+        wait(task)
+        @test isfile(outputpath)
+        @test isempty(read(outputpath, String))
+        @test !isready(emptyservice.requests)
+    finally
+        close(emptyservice.server)
+    end
+
+    if get(ENV, "MONSIEURPAPIN_MODEL2VEC", "false") == "true"
+        researchservice = llmserver(; seed="<html><body>Relative strength index is a momentum trading indicator used to spot overbought and oversold conditions.</body></html>") do payload
+            input = payload["input"]
+            message = occursin("SOURCE URL: https://example.com/rsi", input) ?
+                "Relative Strength Index measures momentum at https://example.com/rsi.\n```julia\nsignal(prices) = rsi(prices, 14) < 30 ? :buy : :hold\n```" :
+                ""
+            Dict("output" => [Dict("type" => "message", "content" => message)])
+        end
+
+        try
+            outputpath = tempname()
+            config = Configuration(; baseurl=researchservice.baseurl, outputpath=outputpath, languages=["eng"])
+            path = wetpath(
+                entryrecord("Relative strength index is a momentum trading indicator used to spot overbought and oversold conditions."; uri="https://example.com/rsi"),
+                entryrecord("Tomato gardening for spring."; uri="https://example.com/garden"),
+            )
+            task = MonsieurPapin.research(config, [researchservice.baseurl * "/seed"], path)
+            wait(task)
+            report = read(outputpath, String)
+            request = take!(researchservice.requests)
+            @test !isempty(report)
+            @test occursin("https://example.com/rsi", report)
+            @test occursin("```julia", report)
+            @test occursin("SOURCE URL: https://example.com/rsi", request["input"])
+        finally
+            close(researchservice.server)
+        end
     end
 end

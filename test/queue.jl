@@ -1,4 +1,5 @@
 using BenchmarkTools
+using Base.Order: By, ReverseOrdering
 using Dates
 using MonsieurPapin
 using Test
@@ -48,6 +49,18 @@ queued(value) = WET(
     @test @allocations(insert!(queue, queued(0.1))) == 0
     @test length(queue) == 2
     @test best!(queue).score == 0.1
+    @test best!(queue).score == 0.4
+    @test isnothing(best!(queue))
+
+    queue = WETQueue(2, typeof(queued(0.0)), ReverseOrdering(By(MonsieurPapin.score)))
+    source = Channel{typeof(queued(0.0))}(4) do channel
+        foreach([0.9, 0.4, 0.1, 0.3]) do value
+            put!(channel, queued(value))
+        end
+    end
+    insert!(queue, source)
+    @test length(queue) == 2
+    @test best!(queue).score == 0.9
     @test best!(queue).score == 0.4
     @test isnothing(best!(queue))
 end

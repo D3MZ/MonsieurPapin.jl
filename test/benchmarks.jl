@@ -6,6 +6,19 @@ import MonsieurPapin: insert!, score, content, gettext, distance
 urispath = joinpath(dirname(@__DIR__), "data", "wet.paths.gz")
 wetspath = joinpath(dirname(@__DIR__), "data", "warc.wet.gz")
 model_source = "minishlab/potion-multilingual-128M"
+seedtext = repeat("""
+relative strength index momentum oscillator trading indicator overbought oversold
+estrategia trading mercado financiero
+strategie trading marche financier
+handelsstrategie finanzmarkt
+strategia trading mercato finanziario
+estrategia negociacao mercado financeiro
+торговая стратегия финансовый рынок
+交易策略 金融市场
+取引戦略 金融市場
+거래 전략 금융 시장
+استراتيجية التداول السوق المالية
+""", 8)
 
 count(iterable) = sum(_ -> 1, iterable)
 rate(iterable, seconds) = round(count(iterable) / seconds)
@@ -83,6 +96,16 @@ rate(iterable, seconds) = round(count(iterable) / seconds)
         display(benchmark)
         records_per_second = rate(wets(wetspath), time)
         @info "Benchmarking AC (records)" records = count(wets(wetspath)) keywords = length(keywords) records_per_second = records_per_second
+        @test records_per_second >= 20_000
+    end
+
+    @testset "Weighted Keyword Matching (Aho-Corasick; Multilingual)" begin
+        weights = MonsieurPapin.weights(seedtext).weights
+        benchmark = @benchmark sum(_ -> 1, (MonsieurPapin.RustWorker.score(ac, wet) for wet in wets($wetspath))) setup=(ac = AC($weights)) samples=1 seconds=5
+        time = median(benchmark).time / 1e9
+        display(benchmark)
+        records_per_second = rate(wets(wetspath), time)
+        @info "Benchmarking weighted AC (records)" records = count(wets(wetspath)) keywords = length(weights) records_per_second = records_per_second
         @test records_per_second >= 20_000
     end
 
