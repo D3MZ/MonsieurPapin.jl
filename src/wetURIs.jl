@@ -11,8 +11,7 @@ end
 
 function wetURIs(index::URI; delimiator=codeunits("\n")[1], capacity=4)
     Channel{StringView}(capacity) do uris
-        HTTP.open("GET", string(index)) do stream
-            HTTP.startread(stream)
+        open(`curl -L -s --fail $(string(index))`) do stream
             gzip = GzipDecompressorStream(BufferedInputStream(stream))
             while !eof(gzip)
                 put!(uris, StringView(readuntil(gzip, delimiator; keep=false)))
