@@ -89,15 +89,16 @@ function wets(index::URI; capacity=Threads.nthreads() * 10, languages=nothing)
     end
 end
 
-wets(paths::AbstractVector{<:Union{AbstractString,URI}}; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/", languages=nothing) =
-    Channel{WET{urilimit,contentlimit,languagelimit}}(capacity) do c
-        foreach(p -> foreach(w -> put!(c, w), p isa URI ? wets(p; capacity, languages) : wets(p; capacity, wetroot, languages)), paths)
+function wets(paths::Channel{T}; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/", languages=nothing) where {T}
+    Channel{WET{urilimit,contentlimit,languagelimit}}(capacity) do channel
+        for path in paths
+            HTTP.open("GET", wetroot * path) do stream
+                HTTP.startread(stream)
+                emit(channel, GzipDecompressorStream(BufferedInputStream(stream)), languages)
+            end
+        end
     end
-
-wets(paths::Channel{T}; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/", languages=nothing) where {T<:Union{AbstractString,URI}} =
-    Channel{WET{urilimit,contentlimit,languagelimit}}(capacity) do c
-        foreach(p -> foreach(w -> put!(c, w), p isa URI ? wets(p; capacity, languages) : wets(p; capacity, wetroot, languages)), paths)
-    end
+end 
 
 # --- Processing Pipeline ---
 
