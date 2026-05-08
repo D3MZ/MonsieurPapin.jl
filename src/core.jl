@@ -10,7 +10,7 @@ Base.@kwdef mutable struct Configuration
     dedupe_capacity::Int = 100_000
     baseurl::String = "http://localhost:1234"
     path::String = "/api/v1/chat"
-    model::String = "qwen/qwen3.5-9b"
+    model::String = "qwen/qwen3.6-27b"
     password::String = ""
     systemprompt::String = "If a trading strategy exists then write a small description about it and the trading strategy as pseudo code wrapped in a code fence, otherwise do not output anything."
     input::String = "Evaluate this page excerpt for trading strategy relevance and follow the output rule."

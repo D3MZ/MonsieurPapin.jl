@@ -8,6 +8,7 @@ headers(config::Configuration) =
 # Updated to match the specific API format provided: model, system_prompt, input
 request(config::Configuration, page::AbstractString) = Dict(
     "model" => config.model,
+    "reasoning" => "off",
     "system_prompt" => config.systemprompt,
     "input" => string(config.input, "\n\n", page)
 )
