@@ -9,13 +9,13 @@
 
 Not your ordinary digester: search the entire internet and summarize into a research-grade markdown file, entirely on your computer, in a day or your money back. :)
 
-Note: This is still in active pre-release development. We'll consider this public-worthy when milestones are complete:
+Note: This is still in active pre-release development
 
 Public Release Milestones
-- [ ] 0/10 full searches completed
-- [ ] 0/10 machines tested on
+- [ ] 0/8 full searches completed
+- [ ] 0/5 machines tested on
 - [ ] 0/3 Major OSs (i.e. Latest Windows, MacOS, & Linux)
-- [ ] Public Research paper published.
+- [ ] Confirmed that different languages can be used in sources.
 
 ## How it works
 
@@ -77,9 +77,8 @@ Configure the LLM endpoint and model name in `src/core.jl` (`baseurl`, `path`, `
 - **Language-aware** — filter by Common Crawl language codes (`eng`, `deu`, `rus`, `jpn`, `zho`, `spa`, `fra`, `por`, `ita`, `pol` by default).
 
 ## TODO
-
+- [ ] Multi-language native
 - [ ] Optimize the multilingual Model2Vec path (work on bytes without string materialization).
-- [ ] `Model2Vec` coarse filter to work on bytes without string materialization.
 - [ ] Optimize `read!` in `src/wets.jl` to use block-based I/O (`readuntil!`) with pre-allocated buffers.
 - [x] `test/benchmarks.jl` measures performance for each stage:
   - [x] wetURIs — URI struct channel throughput.
