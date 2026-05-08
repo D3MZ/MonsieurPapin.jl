@@ -17,6 +17,67 @@ Public Release Milestones
 - [ ] 0/3 Major OSs (i.e. Latest Windows, MacOS, & Linux)
 - [ ] Confirmed that different languages can be used in sources.
 
+## Quick start
+
+### Prerequisites
+
+1. **Julia 1.12+** — [download](https://julialang.org/downloads/)
+2. **Rust toolchain** — `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+3. **An LLM server** running locally with an OpenAI-compatible chat API. [LM Studio](https://lmstudio.ai/) is recommended.
+   - Load a model (e.g. `qwen/qwen3.6-27b`)
+   - Start the local server on port `1234`
+4. **~200 MB free disk** for the embedding model (auto-downloaded on first run)
+
+### Run
+
+```bash
+# Clone and enter the repo
+git clone https://github.com/D3MZ/MonsieurPapin.jl
+cd MonsieurPapin.jl
+
+# Build the Rust worker (one-time)
+cargo build --release --manifest-path deps/model2vec_rs_worker/Cargo.toml
+
+# Start the LLM server (e.g. in LM Studio), then:
+julia --project scripts/live_march.jl
+```
+
+The script will:
+- Download the latest [Common Crawl](https://commoncrawl.org/) WET archive index
+- Stream and decompress WET files (~25K pages/s)
+- Filter pages by keyword match (Aho-Corasick in Rust)
+- Score remaining pages by embedding similarity (Model2Vec)
+- Send the top candidates to your LLM for extraction
+- Write findings to `research.md` in real-time
+
+### Customize
+
+Edit the defaults at the top of `scripts/live_march.jl`:
+
+```julia
+seedurls() = ["https://en.wikipedia.org/wiki/Relative_strength_index"]  # seed pages
+crawlindex() = URI("https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-08/wet.paths.gz")  # crawl to use
+outputpath() = "research.md"         # output file
+languages() = ["eng"]                # language filter
+keywordgate() = 10.0                 # minimum keyword score for harvest stage
+distancegate() = 0.45                # maximum embedding distance for semantic stage
+```
+
+Or configure the LLM endpoint in `src/core.jl`:
+```julia
+baseurl::String = "http://localhost:1234"
+path::String = "/api/v1/chat"
+model::String = "qwen/qwen3.6-27b"
+```
+
+### What to expect
+
+- The first AC candidate (keyword match) should appear within ~40 seconds
+- The first LLM extraction request follows a few seconds later
+- Two progress bars show: `WET files` (100K total) and a page counter
+- `research.md` grows in real-time as the LLM finds trading strategies
+- A full crawl takes ~4 days at typical home broadband speeds
+
 ## How it works
 
 ```
