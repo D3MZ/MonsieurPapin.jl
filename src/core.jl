@@ -185,7 +185,7 @@ end
 
 # --- Final Orchestration ---
 
-append!(file, output::AbstractString) = isempty(output) ? file : (write(file, output, "\n"); flush(file); file)
+append!(file, output::AbstractString) = isempty(output) ? file : (write(file, strip(output), "\n"); flush(file); file)
 
 prompt(wet::WET, config::Configuration) = string("URI: ", uri(wet), "\nLANGUAGE: ", language(wet), "\nSCORE: ", wet.score, "\n\n", content(wet))
 prompt(wet::WET, ::Val{:local}) = string("SOURCE URL: ", uri(wet), "\nLANGUAGE: ", language(wet), "\nDISTANCE: ", wet.score, "\n\nPAGE EXCERPT:\n", content(wet))
@@ -225,7 +225,7 @@ function research(config::Configuration, urls::Vector{<:AbstractString}, wetpath
         retained = length(candidates)
         shortlist = semantic(config, candidates, source)
         report = deepcopy(config)
-        report.systemprompt = "Write a 1-2 sentence description of the strategy or indicator with the source URL, and write a small pseudo Julia code that describes it. If no strategy or indicator is present, output nothing."
+        report.systemprompt = "You extract only trading strategies and financial or technical indicators. If the page does not contain a trading strategy or financial or technical indicator, return an empty string and no explanation. If it does, write 1-2 sentences with the source URL and a small pseudo Julia code block."
         report.input = "Review this page excerpt and follow the output rule."
         entries = length(shortlist)
 

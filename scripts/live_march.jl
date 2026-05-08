@@ -9,6 +9,8 @@ filecount() = 100_000
 shortlistsize() = 10
 excerptsize() = 12_000
 languages() = ["eng"]
+keywordgate() = 10.0
+distancegate() = 0.45
 wettype() = WET{4096, 12000, 64}
 
 resulttype() = NamedTuple{(:wet, :text), Tuple{wettype(), String}}
@@ -17,33 +19,46 @@ elapsed(started) = round(time() - started; digits=2)
 function harvest(config, urls; limitseconds=Inf, started=time())
     seedtext = MonsieurPapin.seed(urls)
     matcher = AC(MonsieurPapin.weights(seedtext).weights)
-    deduper = Deduper(config.dedupe_capacity)
     progress = Progress(filecount(); desc="WET files")
+    state = ReentrantLock()
     processedfiles = Ref(0)
     firstcandidate = Ref(true)
     candidates = Channel{wettype()}(config.capacity) do output
         try
-            for path in wetURIs(config.crawlpath; capacity=1)
-                time() - started < limitseconds || break
-                processedfiles[] += 1
+            paths = wetURIs(config.crawlpath; capacity=Threads.nthreads())
+            tasks = [
+                Threads.@spawn begin
+                    for path in paths
+                        time() - started < limitseconds || break
 
-                try
-                    for wet in wets(String(path); capacity=1, wetroot=config.crawlroot, languages=config.languages)
-                        isduplicate(deduper, wet) && continue
-                        value = MonsieurPapin.RustWorker.score(matcher, wet)
-                        value > 0 || continue
-                        if firstcandidate[]
-                            firstcandidate[] = false
-                            @info "First AC candidate" seconds = elapsed(started) uri = MonsieurPapin.uri(wet) score = value
+                        lock(state) do
+                            processedfiles[] += 1
                         end
-                        put!(output, MonsieurPapin.update(value, wet))
-                    end
-                catch error
-                    @warn "Failed to process WET file" path = String(path) error
-                end
 
-                next!(progress)
-            end
+                        try
+                            for wet in wets(String(path); capacity=Threads.nthreads(), wetroot=config.crawlroot, languages=config.languages)
+                                value = MonsieurPapin.RustWorker.score(matcher, wet)
+                                value >= keywordgate() || continue
+                                lock(state) do
+                                    if firstcandidate[]
+                                        firstcandidate[] = false
+                                        @info "First AC candidate" seconds = elapsed(started) uri = MonsieurPapin.uri(wet) score = value
+                                    end
+                                end
+                                put!(output, MonsieurPapin.update(value, wet))
+                            end
+                        catch error
+                            @warn "Failed to process WET file" path = String(path) error
+                        end
+
+                        lock(state) do
+                            next!(progress)
+                        end
+                    end
+                end
+                for _ in 1:Threads.nthreads()
+            ]
+            foreach(wait, tasks)
         finally
             finish!(progress)
             close(matcher)
@@ -55,7 +70,7 @@ end
 
 function semantic(config, seedtext, candidates)
     source = embedding(MonsieurPapin.query(seedtext); vecpath=config.vecpath)
-    relevant!(source, candidates; capacity=max(Threads.nthreads() * 10, 1), threshold=-1.0)
+    relevant!(source, candidates; capacity=Threads.nthreads(), threshold=1.0 - distancegate())
 end
 
 function page(wet)
@@ -69,7 +84,7 @@ end
 
 function consume!(requests, responses, config, started)
     llm = deepcopy(config)
-    llm.systemprompt = "Write a 1-2 sentence description of the strategy or indicator with the source URL, and write a small pseudo Julia code that describes it. If no strategy or indicator is present, output nothing."
+    llm.systemprompt = "You extract only trading strategies and financial or technical indicators. If the page does not contain a trading strategy or financial or technical indicator, return an empty string and no explanation. If it does, write 1-2 sentences with the source URL and a small pseudo Julia code block."
     llm.input = "Review this page excerpt and follow the output rule."
     firstrequest = Ref(true)
 
@@ -81,7 +96,6 @@ function consume!(requests, responses, config, started)
                 firstrequest[] = false
                 @info "First LLM request" seconds = elapsed(started) uri = MonsieurPapin.uri(wet) score = wet.score
             end
-            @info "Analyzing live page" uri = MonsieurPapin.uri(wet) score = wet.score
             put!(responses, (wet = wet, text = complete(page(wet), llm)))
         catch error
             @info "llm request failed" error
@@ -134,8 +148,8 @@ function drain!(queue, requests, responses, submitted, completed, written, file)
 end
 
 function report(config, scored, started)
-    requests = Channel{Union{Nothing, wettype()}}(1)
-    responses = Channel{resulttype()}(shortlistsize())
+    requests = Channel{Union{Nothing, wettype()}}(Threads.nthreads())
+    responses = Channel{resulttype()}(Threads.nthreads())
     submitted = Ref(0)
     completed = Ref(0)
     written = Ref(0)
@@ -168,9 +182,9 @@ end
 
 function run(; limitseconds=Inf)
     started = time()
-    config = Configuration(; capacity=1, crawlpath=crawlindex(), outputpath=outputpath(), languages=languages())
+    config = Configuration(; capacity=Threads.nthreads(), crawlpath=crawlindex(), outputpath=outputpath(), languages=languages())
     urls = seedurls()
-    @info "Starting live March crawl" urls crawlpath = string(config.crawlpath) outputpath = config.outputpath languages = config.languages limitseconds
+    @info "Starting live March crawl" urls crawlpath = string(config.crawlpath) outputpath = config.outputpath languages = config.languages limitseconds keywordgate = keywordgate() distancegate = distancegate() threads = Threads.nthreads()
     harvested = harvest(config, urls; limitseconds, started)
     scored = semantic(config, harvested.seedtext, harvested.candidates)
     results = report(config, scored, started)
