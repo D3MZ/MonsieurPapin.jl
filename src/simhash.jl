@@ -68,6 +68,15 @@ end
 isduplicate(deduper::Deduper, bytes::AbstractVector{UInt8}) = seen!(deduper, simhash(bytes))
 isduplicate(deduper::Deduper, text::AbstractString) = seen!(deduper, simhash(text))
 
+function simhash(wet::WET{U,C,L}) where {U,C,L}
+    reference = Ref(wet)
+    GC.@preserve reference begin
+        ptr = Base.unsafe_convert(Ptr{WET{U,C,L}}, reference) + contentoffset(WET{U,C,L})
+        view = StringView(unsafe_wrap(Vector{UInt8}, Ptr{UInt8}(ptr), wet.content.length))
+        simhash(view)
+    end
+end
+
 function isduplicate(deduper::Deduper, wet::WET{U,C,L}) where {U,C,L}
     reference = Ref(wet)
     GC.@preserve reference begin
