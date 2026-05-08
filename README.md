@@ -5,265 +5,82 @@
 [![Build Status](https://github.com/D3MZ/MonsieurPapin.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/D3MZ/MonsieurPapin.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![Coverage](https://codecov.io/gh/D3MZ/MonsieurPapin.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/D3MZ/MonsieurPapin.jl)
 
-> A French Huguenot physicist, mathematician and inventor, best known for his pioneering invention of the steam digester, the forerunner of the pressure cooker, the steam engine, the centrifugal pump, and a submersible boat. - [Wikipedia](https://en.wikipedia.org/wiki/Denis_Papin)
+> A French Huguenot physicist, mathematician and inventor, best known for his pioneering invention of the steam digester, the forerunner of the pressure cooker, the steam engine, the centrifugal pump, and a submersible boat. — [Wikipedia](https://en.wikipedia.org/wiki/Denis_Papin)
 
-Not your ordinary digester: Search the entire internet summarize into a "research grade" markdown file entirely on your computer in a day or your money back!
+Not your ordinary digester: search the entire internet and summarize into a research-grade markdown file, entirely on your computer, in a day or your money back. :)
+
+## How it works
+
+```
+Common Crawl WET Archive (6 TiB compressed, 2.1B pages)
+              │
+    ┌─────────▼──────────┐
+    │  1. INGEST         │  HTTP stream + gzip decompress
+    │  ~25,000 pages/s   │  Parse WARC records → WET structs
+    └─────────┬──────────┘
+              │ channel of WET pages
+    ┌─────────▼──────────┐
+    │  2. HARVEST        │  Dedup + keyword filter (Aho-Corasick in Rust)
+    │  rust worker       │  Non-matching pages are dropped
+    └─────────┬──────────┘
+              │ channel of candidates
+    ┌─────────▼──────────┐
+    │  3. SEMANTIC       │  Model2Vec embedding similarity
+    │  embedding model   │  Cosine distance vs. query vector
+    │  potion-128M       │  Only pages above threshold survive
+    └─────────┬──────────┘
+              │ priority queue (max 10K items)
+    ┌─────────▼──────────┐
+    │  4. EXTRACT        │  LLM reads each page snippet
+    │  LLM (local API)   │  If relevant → description + pseudo Julia code
+    └─────────┬──────────┘
+              │
+    ┌─────────▼──────────┐
+    │  research.md        │  Appended in real-time as LLM responds
+    └────────────────────┘
+```
+
+Each stage is ~10–100× faster than the next, so the expensive LLM only sees the top ~0.001% of pages:
+
+| Stage     | Technology                           | Speed          | Survivors      |
+|-----------|--------------------------------------|----------------|----------------|
+| Ingest    | Julia streaming I/O                  | ~25K pages/s   | 2.1B → 2.1B    |
+| Harvest   | Rust Aho-Corasick                    | —              | 2.1B → ~100M   |
+| Semantic  | Model2Vec `potion-multilingual-128M` | ~2.5K pages/s  | ~100M → 10K    |
+| Extract   | LLM via HTTP API                     | ~0.1 pages/s   | 10K → ~100 md  |
+
+The frontier is a **min-max heap queue**: new pages displace worse ones when their score is higher, maintaining the 10K best results. The LLM pops from the best end and writes to `research.md` live — results stream in while the crawl is still running.
+
+## Models required
+
+| Model | Type | How it's loaded |
+|---|---|---|
+| `minishlab/potion-multilingual-128M` | Embedding (Model2Vec) | Auto-downloaded from HuggingFace by the Rust worker on first run |
+| Any OpenAI-compatible chat LLM | Chat / extraction | Must be running separately at the configured base URL (default `http://localhost:1234`) |
+
+Configure the LLM endpoint and model name in `src/core.jl` (`baseurl`, `path`, `model`).
+
+## Key design decisions
+
+- **Staged filtering** — cheap filters eliminate 99.9% of pages before the LLM sees them.
+- **Zero-allocation WET parsing** — WARC records parsed into fixed-size structs with no heap allocations.
+- **Rust FFI for hot paths** — Aho-Corasick matching and embedding similarity run in a Rust shared library (`deps/model2vec_rs_worker`).
+- **Live output** — `research.md` is appended in real-time; results appear while the crawl runs.
+- **Language-aware** — filter by Common Crawl language codes (`eng`, `deu`, `rus`, `jpn`, `zho`, `spa`, `fra`, `por`, `ita`, `pol` by default).
 
 ## TODO
-- [x] 2x reduction in allocs: in `wetURIs` preallocate the bytes use StringViews.jl to read that byte buffer whenever needed.
-- [ ] StringViews.jl in wets parsing? Maybe degrades performance since it's NTuple now.
-- [ ] Model2Vec coarse filter to work on bytes without string materialization.
-- [ ] Optimize `read!` in `src/wets.jl` to use block-based I/O (`readuntil!`) with pre-allocated buffers instead of byte-by-byte reading.
-- [ ] `test/benchmarks.jl` measures performance for each stage that uses the test files.
-  - [x] wetURIs - how fast we're able to put URI structs into a channel and take from them.
-  - [x] wets - how fast we're able to put WET structs into a channel and take from them.
-  - [ ] model2vec - similarity and distance calculation throughput (Pulls from WET channel, pushes into another channel)
-  - [ ] relevant! - filtering performance and allocation count under load.
-  - [ ] queue - ingestion and `best!` extraction speed of the `Frontier`.
-  - [ ] llm - prompt construction overhead and end-to-end processing latency.
-- [ ] remove query from configuration. add Embedding(URI) constructor that generates an embedding from a webpage.
-- [x] Add languages to configuration struct. 
-  - [x] Skip languages not specified.
-  - [x] Add translate(string, language) to `llm.jl`.
-- [ ] `crawl.jl`
-  - [ ] `crawl(url::String)` Crawl Reference URLs
-  - [ ] `gettext(crawloutput::String)::String` Extract Text from crawl
-- [ ] `tokenize.jl`
-  - [ ] `tokenize(string)::Vector{Vector{Bytes}}` 
-  - [ ] `tokenfrequency(tokens::Vector{Vector{Bytes}})::Vector{Vector{Bytes},Int}`
-  - [ ] `inversetokenfreq(counts::Vector{Vector{Bytes},Int})` 
-  - [ ] `normalize(termcounts, doclength::Int)`
-- [ ] `score.jl` - add scoring function that 
 
-Scoring fitness can be based on:
-1. Relevance
-2. similarity to historical 
-3. Entropy 
-4. Age 
-5. Etc. 
-
-
-## IGNORE BELOW WIP
-
-Initialization
-1. Crawl Reference URLs -> Extract Text -> Translate full text into [Languages] -> Aggregate into term frequencies -> Build document length normalized score system.
-2. Aho-Corasick
-
-
-1. WET file stream and type creation -> 25K WETs/Sec 
-2. 
-
-language independent filtering that's significantly faster than 25K pages/sec, 
-so I can use an Embedding model (2678 WETS /sec) to do a coarse filter for an LLM to extract real information.
-
-
-Current coarse scoring implementation is: 8K WETS / s
-Model2Vec Multi-lingual Embedding model (2678 WETS /sec)
-LLM can do about 0.1 WETS/sec
-
-
-| Pipeline Stage   | Input Velocity (Pages/Sec) | Operation Performed                  | Primary Technology / Algorithm                 | Output Velocity (Pages/Sec) |
-|------------------|-----------------------------|--------------------------------------|-----------------------------------------------|-------------------------------|
-| Ingestion        | Network Limits.             | WET File Download & Unzip            | HTTP                                          | ~25,000                       |
-| Coarse Filter    | ~25,000                     | Information Density Check            | LZ4 Compression Ratio (Compel)                | ~5,000                        |
-| Deduplication    | ~5,000                      | Exact & Fuzzy Redundancy Check       | Bloom Filter (Rust) & MinHash (SIMD)          | ~2,400                        |
-| Semantic Filter  | ~2,400                      | Vector Similarity Search             | Dense Embedding Model                         | < 0.1                         |
-| Extraction       | < 0.1                       | Deep Reasoning & Parsing             | Large Language Model (LLM)                    | Final Intelligence            |
-
-### Ideas
-
-1. Pages/sec are we able to gunzip from online/local feed? This is the floor rate that we should maintain using all the extra cpu and gpu compute to do as much research as possible. Can be easily extended to the either floor rate or user defined param
-2. LLM speed
-3. Skimming speed.
-
-Perhaps N levels + intelligence to maintain pace?
-1. LLM thinking
-2. LLM non think
-3. Embedding model
-...
-N. bag of words?
-
-
-
-
-
-----
-
-
-
-In core.jl
-```julia
-function research(exampleuri)
-  source = embedding(exampleuri)
-  weturis
-  wets
-  filtered = relevant!(source, wets)
-  add to queue
-  end 
-end
-```
-
-
-
-Ensure performance maintains +20K pages/sec
-- [x] Streaming and decompress
-- [x] Use an embedding model on pages. Score distance. initial comparison: "trading strategies"
-- [x] Insert into Priority Min Max Queue that's no more than 10K elements large.
-- [x] Generate an openai-compatible.json config for local endpoint/model/output path with optional password field.
-- [x] Have LLM pop from queue and if relevant, append write into a research markdown doc based on prompt: "If a trading strategy exists then write a small description about it and the trading strategy as pseudo code wrapped in a code fence, otherwise do not output anything". 
-- [ ] Fix progress bar so it displays correctly. Do benchmarking to determine if throttling the events going to it has any impact on it's performance. Report your results and if there's no performance then remove the update throttling from the code and refactor.
-- [ ] Optimize the multilingual model2vec path.
-- [ ] move "trading strategy" query to the config.json file, and replace it with the text from this site: https://priceaction.com/blog/articles/simplest-trading-strategy-in-the-world/ 
-
-- [ ] Progress bar
-- [ ] stream `CC-MAIN-2026-08` and decompress
-- [ ] 
-- [ ] Download Stage
-  - [ ] Get Common Crawl monthly WET snapshot via `crawlpath` and determine the number of urls.
-  - [ ] Put `.warc.wet.gz` file URLs into `weturls::Channel{String}`
-  - [ ] Stream-download WET files into `wetstreams::Channel{IO}` sized from `DownloadSettings.ram` at init.
-  - [ ] Stream-decompress gzip
-  - [ ] Stream WET records efficiently into a Julia `warcs::Channel{WET}` sized to 2x embedding batch.
-    - [ ] Use Content-Length from header to efficiently read plaintext content.
-    - [ ] Parse WET into `WET` types, have the types go into the `warcs` channel
-
-- [ ] Embedding Stage (CPU) for coarse semantic filtering
-  - [ ] Take from the `warcs` channel and filter using GemmaEmbeddings model on CPU
-    - [ ] normalize the content 
-    - [ ] Tokenize up to `EmbeddingSettings.context` length of tokens
-    - [ ] Embed on CPU
-    - [ ] If cosine similarity is within `EmbeddingSettings.distance` then put into `filteredwarcs::Channel{WET}` sized to `2 * LLMSettings.batchsize`.
-
-- [ ] LLM Stage (GPU) for summarizing
-  - [ ] Take from `filteredwarcs` channel and pack into `llmbatches::Channel{Vector{WET}}` sized from `LLMSettings.gpumemory` at init.
-  - [ ] Batch pages for GPU inference up to memory limits using `LLMSettings.batchsize`.
-  - [ ] Have LLM append to markdown file.
-
-
-
-## Features
-- [ ] Query in 1 language, sources and information in all languages.
-- [ ] Diverse: Near Duplicate ideas are aggregated
-
-# GOTCHAS
-Silent Truncation: The new WET struct uses fixed-size Snippet buffers (4KB for URIs, 12KB for content). Any record with content longer than 12KB is silently truncated. Previously, the full content was available.
-
-## Theory and Research
-A gigabit connection places our lowerbound of reading the internet to about a day. 
-24hrs gives a Local LLM has enough time to process ~10K pages. 
-
-This creates a few challenges:
-1. How to filter effectively given a generic search phrase?
-2. How to find the best 10K pages out of the 2.1 Billion? 
-3. How to do it without taking too many resources from the GPU?
-4. How to ensure maximum diversity and relevance?
-
-Rough ideas:
-1. [Max-min fairness](https://en.wikipedia.org/wiki/Max-min_fairness) is said to be achieved by an allocation if and only if the allocation is feasible and an attempt to increase the allocation of any participant necessarily results in the decrease in the allocation of some other participant with an equal or smaller allocation.
-2. [Min-max heap queues](https://en.wikipedia.org/wiki/Priority_queue)
-
-
-### Streaming Budget @ 68.63 MiB/s Compressed (≈ 203 MB/s Plaintext, ≈ 24,015 pages/s)
-
-_Assumes Apple M1 Max performance core (~3.2 GHz, ~1.2 INT ops/cycle sustained for branchy, memory-bound workloads ⇒ ~3.8×10^9 INT ops/sec/core) for CPU core equivalence estimates._
-
-```
-| Step                      | Operation                | Compute / s          | CPU (cores) | Mem BW / s     | Notes               |
-|---------------------------|--------------------------|----------------------|-------------|----------------|---------------------|
-| Download                  | Network I/O              | —                    | —           | 68.63 MiB/s in | Baseline ingest     |
-| Decompress (gzip)         | Inflate plaintext        | ~8.1×10⁸ cycles/s    | ~0.6        | ~203 MB/s out  | 3–5 cycles/byte     |
-| WARC Header Parse         | Record framing           | ~5–10×10⁷ cycles/s   | ~0.3–0.6    | negligible     | ~100–200 ns/record  |
-| Normalize Text            | Lower / strip punct      | ~9.25×10⁸ int ops/s  | ~0.4        | stream-bound   | ~5 ops/char         |
-| Shingle Tokenization (k5) | Rolling hash             | ~9.25×10⁸ int ops/s  | ~0.4        | stream-bound   | ~5 ops/char         |
-| SimHash Build (64-bit)    | Accumulator updates      | ~1.18×10¹⁰ int adds  | ~5.5        | ~6 MB/s writes | 64 updates/shingle  |
-| Sliding Dedupe (W=512)    | XOR + POPCNT             | ~6.1×10⁷ cycles/s    | ~0.05       | ~197 MB/s read | 12.3 M comps/s      |
-| **Pipeline Total**        | —                        | ~1.4×10¹⁰ int ops/s  | **~7–8**    | **400–600 MB/s** | Inline w/ download |
-```
-
-### Sliding Window Size vs Headroom
-
-```
-| Window (W) | Comparisons / s | CPU (cores) | Mem BW / s |
-|------------|------------------|-------------|------------|
-| 10^3       | ~24.0 M          | ~0.10       | ~384 MB/s  |
-| 10^4       | ~240 M           | ~1.0        | ~3.84 GB/s |
-| 10^5       | ~2.4 B           | ~10.0       | ~38.4 GB/s |
-| 10^6       | ~24.0 B          | ~100        | ~384 GB/s  |
-| 10^7       | ~240 B           | ~1000       | ~3.84 TB/s |
-```
-
-
-
-- [February 2026 crawl](https://commoncrawl.org/blog/february-2026-crawl-archive-now-available) is 2.1 billion web pages and 5.96 TiB of compressed WET files (~human readable text).
-- 6 TB of compressed is 17 TB uncompressed at 2.8249x compression ratio
-  - 30 file sample
-- 21 hours - 25 hrs to download compressed WET
-  - 30s, 1 thread: 68.63 MiB/s
-  - 30s, 4 threads: 81.82 MiB/s
-- 24,015 pages/s
-  - 1 thread download and read
-  - 24,015 pages/s * 25 * 3600 s = 2,161,350,000 pages == [2.1B pages February 2026 Crawl post total](https://commoncrawl.org/blog/february-2026-crawl-archive-now-available).
-- 7,695.81 chars/page & 3,828.90 tokens/page.
-  - 3,000 record sample
-- fastText? 
-- 13,000 tokens/s 200MB RAM usage through multi-language embedding model
-  - EmbeddingGemma, M1 Max GPU, GGUF Q4 quantization
-- CHECK: 8,640 pages/day ~ 0.1 pages/s via LLM assuming 4K tokens input and 250 tokens output.
-  - 50 Token/s LLM
-
-### EmbeddingGemma Performance Matrix
-_Source: `benchmarks/embeddinggemma_matrix_doe.csv`, LM Studio `lms.Client` runs, and REST runs from `scripts/benchmark_lmstudio_rest_python.py` + `scripts/benchmark_lmstudio_rest_julia.jl` on `text-embedding-embeddinggemma-300m-qat` (Q4 GGUF) and `text-embedding-embeddinggemma-300m` (F32 GGUF), duration 20s per batch. REST `Tok/s` uses `Req/s * Seq Len` proxy because API embedding usage tokens are reported as `0`._
-
-| Model Variant           | Device     | Seq Len (tokens) | Batch |  Req/s |    Tok/s | Elapsed (s) |
-|:------------------------|:-----------|-----------------:|------:|-------:|---------:|------------:|
-| full                    | cpu        |             2048 |     2 |  1.404 |  2,875.2 |       31.34 |
-| full                    | cpu        |             2048 |     8 |  1.467 |  3,004.9 |       32.71 |
-| full                    | cpu        |             2048 |    16 |  1.498 |  3,067.9 |       32.04 |
-| full                    | cpu        |             1024 |     2 |  2.575 |  2,636.6 |       30.29 |
-| full                    | cpu        |             1024 |     8 |  2.911 |  2,980.6 |       30.23 |
-| full                    | cpu        |             1024 |    16 |  2.981 |  3,053.0 |       32.20 |
-| full                    | cpu        |              512 |     2 |  3.898 |  1,995.5 |       30.28 |
-| full                    | cpu        |              512 |     8 |  4.413 |  2,259.6 |       30.82 |
-| full                    | cpu        |              512 |    16 |  4.633 |  2,371.9 |       31.08 |
-| full                    | mps        |             2048 |     2 |  2.589 |  5,303.2 |       30.12 |
-| full                    | mps        |             2048 |     8 |  2.298 |  4,706.7 |       31.33 |
-| full                    | mps        |             2048 |    16 |  1.540 |  3,154.4 |       31.16 |
-| full                    | mps        |             1024 |     2 |  3.916 |  4,010.4 |       30.13 |
-| full                    | mps        |             1024 |     8 |  4.290 |  4,392.6 |       31.70 |
-| full                    | mps        |             1024 |    16 |  4.204 |  4,304.9 |       30.45 |
-| full                    | mps        |              512 |     2 |  5.456 |  2,793.7 |       30.06 |
-| full                    | mps        |              512 |     8 |  5.806 |  2,972.5 |       30.32 |
-| full                    | mps        |              512 |    16 |  5.675 |  2,905.8 |       31.01 |
-| quantized               | cpu        |             2048 |     2 |  0.016 |     33.5 |      122.17 |
-| quantized               | cpu        |             2048 |     8 |  0.960 |  1,966.1 |       33.33 |
-| quantized               | cpu        |             2048 |    16 |  0.973 |  1,993.3 |       32.88 |
-| quantized               | cpu        |             1024 |     2 |  2.155 |  2,206.7 |       30.63 |
-| quantized               | cpu        |             1024 |     8 |  2.158 |  2,210.1 |       33.36 |
-| quantized               | cpu        |             1024 |    16 |  2.108 |  2,158.8 |       30.36 |
-| quantized               | cpu        |              512 |     2 |  3.589 |  1,837.3 |       30.10 |
-| quantized               | cpu        |              512 |     8 |  3.770 |  1,930.4 |       31.83 |
-| quantized               | cpu        |              512 |    16 |  3.727 |  1,908.3 |       30.05 |
-| lmstudio-q4             | metal      |             2048 |     1 |  6.284 | 12,869.8 |       20.05 |
-| lmstudio-q4             | metal      |             2048 |     2 |  6.316 | 12,935.7 |       20.27 |
-| lmstudio-q4             | metal      |             2048 |     4 |  6.239 | 12,777.9 |       20.52 |
-| lmstudio-q4             | metal      |             2048 |     8 |  6.301 | 12,905.3 |       20.31 |
-| lmstudio-q4             | metal      |             1024 |     1 | 11.878 | 12,162.6 |       20.04 |
-| lmstudio-q4             | metal      |             1024 |     4 | 11.963 | 12,250.3 |       20.06 |
-| lmstudio-q4             | metal      |              512 |     1 | 21.870 | 11,197.3 |       20.03 |
-| lmstudio-q4             | metal      |              512 |     4 | 21.434 | 10,974.0 |       20.16 |
-| lmstudio-q4             | metal      |              512 |    16 |  5.675 |  2,905.8 |       31.01 |
-| lmstudio-f32            | metal      |             2048 |     1 |  6.397 | 13,101.5 |       20.01 |
-| lmstudio-f32            | metal      |             2048 |     2 |  6.356 | 13,017.4 |       20.14 |
-| lmstudio-f32            | metal      |             2048 |     4 |  6.308 | 12,917.8 |       20.29 |
-| lmstudio-f32            | metal      |             2048 |     8 |  6.316 | 12,935.1 |       20.27 |
-| lmstudio-f32            | metal      |             1024 |     1 | 11.828 | 12,111.7 |       20.04 |
-| lmstudio-f32            | metal      |             1024 |     4 | 11.907 | 12,192.6 |       20.16 |
-| lmstudio-f32            | metal      |              512 |     1 | 21.388 | 10,950.9 |       20.01 |
-| lmstudio-f32            | metal      |              512 |     4 | 21.315 | 10,913.5 |       20.08 |
-| lmstudio-q4-rest-python | metal(api) |             2048 |     2 |  6.678 | 13,677.5 |       20.06 |
-| lmstudio-q4-rest-python | metal(api) |             2048 |     4 |  6.497 | 13,306.2 |       20.32 |
-| lmstudio-q4-rest-python | metal(api) |             2048 |     8 |  6.373 | 13,052.7 |       20.08 |
-| lmstudio-q4-rest-julia  | metal(api) |             2048 |     2 |  6.350 | 13,003.9 |       20.16 |
-| lmstudio-q4-rest-julia  | metal(api) |             2048 |     4 |  6.466 | 13,241.4 |       20.42 |
-| lmstudio-q4-rest-julia  | metal(api) |             2048 |     8 |  6.518 | 13,349.1 |       20.86 |
-| lmstudio-q4-rest-julia  | metal(api) |              512 |     8 | 23.937 | 12,255.8 |       20.05 |
+- [ ] Optimize the multilingual Model2Vec path (work on bytes without string materialization).
+- [ ] `Model2Vec` coarse filter to work on bytes without string materialization.
+- [ ] Optimize `read!` in `src/wets.jl` to use block-based I/O (`readuntil!`) with pre-allocated buffers.
+- [ ] `test/benchmarks.jl` measures performance for each stage:
+  - [x] wetURIs — URI struct channel throughput.
+  - [x] wets — WET struct channel throughput.
+  - [ ] model2vec — similarity and distance calculation throughput.
+  - [ ] relevant! — filtering performance and allocation count under load.
+  - [ ] queue — ingestion and `best!` extraction speed of the frontier.
+  - [ ] llm — prompt construction overhead and end-to-end processing latency.
+- [ ] Remove query from configuration. Add `Embedding(URI)` constructor that generates an embedding from a webpage.
+- [ ] WetURIs is ~200KB — can be downloaded entirely rather than streamed.
+- [ ] Fix progress bar time estimate (appears to always increase).
+- [ ] Pass `reasoning: off` in LLM API requests to skip thinking tokens.
