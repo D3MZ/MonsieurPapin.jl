@@ -9,6 +9,14 @@
 
 Not your ordinary digester: search the entire internet and summarize into a research-grade markdown file, entirely on your computer, in a day or your money back. :)
 
+Note: This is still in active pre-release development. We'll consider this public-worthy when milestones are complete:
+
+Public Release Milestones
+- [ ] 0/10 full searches completed
+- [ ] 0/10 machines tested on
+- [ ] 0/3 Major OSs (i.e. Latest Windows, MacOS, & Linux)
+- [ ] Public Research paper published.
+
 ## How it works
 
 ```
@@ -80,7 +88,10 @@ Configure the LLM endpoint and model name in `src/core.jl` (`baseurl`, `path`, `
   - [x] relevant! — filtering performance and allocation count under load.
   - [x] queue — ingestion and `best!` extraction speed of the frontier.
   - [x] llm — prompt construction overhead and end-to-end processing latency.
+- [ ] Ensure tests don't reference large data sets, the data doesn't exist outside of test folder, and scope them small enough that they work with github actions
+  - [ ] Ensure github actions runs the test suite.  
 - [ ] Remove query from configuration. Add `Embedding(URI)` constructor that generates an embedding from a webpage.
 - [ ] WetURIs is ~200KB — can be downloaded entirely rather than streamed.
 - [ ] Fix progress bar time estimate (appears to always increase).
 - [ ] Pass `reasoning: off` in LLM API requests to skip thinking tokens.
+- [ ] Investigate wrapping this inside of a docker container for easier install
