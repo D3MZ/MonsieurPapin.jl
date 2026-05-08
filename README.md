@@ -73,13 +73,13 @@ Configure the LLM endpoint and model name in `src/core.jl` (`baseurl`, `path`, `
 - [ ] Optimize the multilingual Model2Vec path (work on bytes without string materialization).
 - [ ] `Model2Vec` coarse filter to work on bytes without string materialization.
 - [ ] Optimize `read!` in `src/wets.jl` to use block-based I/O (`readuntil!`) with pre-allocated buffers.
-- [ ] `test/benchmarks.jl` measures performance for each stage:
+- [x] `test/benchmarks.jl` measures performance for each stage:
   - [x] wetURIs — URI struct channel throughput.
   - [x] wets — WET struct channel throughput.
-  - [ ] model2vec — similarity and distance calculation throughput.
-  - [ ] relevant! — filtering performance and allocation count under load.
-  - [ ] queue — ingestion and `best!` extraction speed of the frontier.
-  - [ ] llm — prompt construction overhead and end-to-end processing latency.
+  - [x] model2vec — similarity and distance calculation throughput.
+  - [x] relevant! — filtering performance and allocation count under load.
+  - [x] queue — ingestion and `best!` extraction speed of the frontier.
+  - [x] llm — prompt construction overhead and end-to-end processing latency.
 - [ ] Remove query from configuration. Add `Embedding(URI)` constructor that generates an embedding from a webpage.
 - [ ] WetURIs is ~200KB — can be downloaded entirely rather than streamed.
 - [ ] Fix progress bar time estimate (appears to always increase).

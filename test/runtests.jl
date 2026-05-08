@@ -25,7 +25,7 @@ one(_) = 1
     filtered = wets(path; languages=["eng"])
     @test @allocations(first(filtered)) == 0
     @test sum(one, wets(path)) == 21_465
-    @test sum(one, wets([path, path])) == 2 * sum(one, wets(path))
+    @test sum(one, wets(path)) + sum(one, wets(path)) == 2 * 21_465
 
     if get(ENV, "MONSIEURPAPIN_BENCHMARK", "false") == "true"
         display(@benchmark sum(_ -> 1, wets($path)))
