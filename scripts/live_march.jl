@@ -3,7 +3,7 @@ using Base.Order: By, ReverseOrdering
 using HTTP: URI
 
 seedurls() = ["https://en.wikipedia.org/wiki/Relative_strength_index"]
-crawlindex() = URI("https://data.commoncrawl.org/crawl-data/CC-MAIN-2025-13/wet.paths.gz")
+crawlindex() = URI("https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-08/wet.paths.gz")
 outputpath() = "research.md"
 filecount() = 100_000
 shortlistsize() = 10
