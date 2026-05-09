@@ -13,8 +13,8 @@ config = Configuration(
 
 # Boostrap: fetch seed URLs, let LLM generate keywords + semantic query
 seed_urls = [
-    "https://www.investopedia.com/articles/forex/10/making-a-rule-based-trading-system.asp",
-    "https://quanthop.com/learn/strategy-building/entry-exit-rules",
+    "https://en.wikipedia.org/wiki/Technical_analysis",
+    "https://en.wikipedia.org/wiki/Algorithmic_trading",
 ]
 bootstrap(config, seed_urls, "Find trading strategies that can be expressed as pseudo-code with clear entry/exit rules")
 
