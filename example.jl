@@ -1,31 +1,8 @@
 #!/usr/bin/env julia
-# example.jl — Parallel MonsieurPapin pipeline
+# example.jl — Waterfall pipeline: each stage streams into the next
 using MonsieurPapin, ProgressMeter
 using HTTP: URI
 
-# ═══════════════════════════════════════════════════════════════════
-# QUICK DEMO (offline — 25 WET records shipped in repo)
-# ═══════════════════════════════════════════════════════════════════
-#
-#     config = Configuration(crawlpath="data/warc.wet.gz", capacity=5, query="news")
-#     for wet in wets(config)
-#         println(uri(wet))
-#     end
-
-# ═══════════════════════════════════════════════════════════════════
-# PARALLEL THREE-STAGE PIPELINE
-# ═══════════════════════════════════════════════════════════════════
-#
-# Prerequisites:
-#   1. Running LLM endpoint (e.g. LM Studio at localhost:1234)
-#   2. Internet access — WET files streamed from commoncrawl.org
-#
-# Stages (pipelined concurrently):
-#   1. harvest — N threads download WET files, dedupe, keyword-match
-#   2. semantic — embeddings score candidates, maintain top-N queue
-#   3. report  — LLM summarises best pages, writes research.md
-
-# --- config ---------------------------------------------------------
 config = Configuration(
     crawlpath  = "data/wet.paths.gz",
     capacity   = 2000,
@@ -36,11 +13,12 @@ config = Configuration(
 )
 
 const NTHREADS   = Threads.nthreads()
-const TOTAL_URIS = 100_000  # data/wet.paths.gz line count
+const TOTAL_URIS = 100_000
 
-# --- stage 1: parallel harvest -------------------------------------
 wet_type = WET{4096, 12000, 64}
-uris     = Channel{String}(NTHREADS * 10) do ch
+
+# ── stage 1: parallel WET download → raw channel ───────────────────
+uris = Channel{String}(NTHREADS * 10) do ch
     for uri in wetURIs(config.crawlpath; capacity=NTHREADS)
         put!(ch, String(uri))
     end
@@ -71,19 +49,68 @@ raw = Channel{wet_type}(NTHREADS * 100) do out
     finish!(p)
 end
 
-# --- stage 2: semantic scoring -------------------------------------
+# ── stage 2: harvest (dedup + keyword) ─────────────────────────────
 candidates = harvest(config, raw)
-shortlist  = semantic(config, candidates)
 
-# --- stage 3: LLM report -------------------------------------------
-@info "Top candidates" count = length(shortlist)
-open(config.outputpath, "w") do file
-    while !isempty(shortlist)
-        wet = best!(shortlist)
-        @info "LLM analysing" uri = MonsieurPapin.uri(wet) score = wet.score
-        output = complete(MonsieurPapin.prompt(wet, config), config)
-        MonsieurPapin.append!(file, output)
-        flush(file)
+# ── stage 3+4: semantic scoring + LLM waterfall ────────────────────
+emb       = embedding(config.query; vecpath=config.vecpath)
+shortlist = WETQueue(config.capacity, wet_type)
+
+requests  = Channel{Union{Nothing, wet_type}}(NTHREADS)
+responses = Channel{NamedTuple{(:wet, :text), Tuple{wet_type, String}}}(NTHREADS)
+submitted = Threads.Atomic{Int}(0)
+completed = Threads.Atomic{Int}(0)
+
+# LLM consumer runs in background
+consumer = Threads.@spawn begin
+    for wet in requests
+        wet === nothing && break
+        try
+            output = complete(MonsieurPapin.prompt(wet, config), config)
+            put!(responses, (wet=wet, text=output))
+        catch e
+            @warn "LLM request failed" uri=MonsieurPapin.uri(wet) e
+            put!(responses, (wet=wet, text=""))
+        end
     end
 end
-println("Done → $(config.outputpath)")
+
+open(config.outputpath, "w") do file
+    scored = relevant!(emb, candidates; capacity=NTHREADS*10, threshold=1.0-config.threshold)
+    first_result = Ref(true)
+
+    for wet in scored
+        first_result[] && (@info "First result" uri=MonsieurPapin.uri(wet) score=wet.score; first_result[] = false)
+        MonsieurPapin.insert!(shortlist, wet)
+
+        # Dispatch best to LLM as queue fills
+        while !MonsieurPapin.isempty(shortlist) && submitted[] < config.capacity && !isfull(requests)
+            put!(requests, MonsieurPapin.best!(shortlist))
+            submitted[] += 1
+        end
+
+        # Collect any completed LLM responses
+        while isready(responses)
+            result = take!(responses)
+            completed[] += 1
+            MonsieurPapin.append!(file, result.text)
+        end
+    end
+
+    # Drain remaining queue
+    while !MonsieurPapin.isempty(shortlist) && submitted[] < config.capacity && !isfull(requests)
+        put!(requests, MonsieurPapin.best!(shortlist))
+        submitted[] += 1
+    end
+
+    # Wait for all LLM responses
+    while completed[] < submitted[]
+        result = take!(responses)
+        completed[] += 1
+        MonsieurPapin.append!(file, result.text)
+    end
+end
+
+put!(requests, nothing)  # signal consumer to stop
+wait(consumer)
+@info "Done" submitted=submitted[] completed=completed[] output=config.outputpath
