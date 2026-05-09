@@ -14,7 +14,6 @@
 - [x] OpenAI-compatible LLM integration
 
 ## Architecture
-- [ ] Replace Configuration struct with a toml file.
 - [ ] Convert keyword harvest from a streaming threshold filter to a competing `WETQueue`.
 - [ ] Convert deduplication from a hard filter to a soft SimHash-ranked queue.
 - [ ] Add deduplication to `scripts/live_march.jl`.

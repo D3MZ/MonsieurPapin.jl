@@ -55,7 +55,7 @@ end
     @testset "wets language filter" begin
         records = count(wets(wetspath))
         singlelanguage = ["eng"]
-        manylanguages = Configuration().languages
+        manylanguages = ["eng", "deu", "rus", "jpn", "zho", "spa", "fra", "por", "ita", "pol"]
         emittedsingle = count(wets(wetspath; languages=singlelanguage))
         emittedmany = count(wets(wetspath; languages=manylanguages))
         singlebenchmark = @benchmark sum(_ -> 1, wets($wetspath; languages=$singlelanguage)) samples=1 seconds=5
@@ -218,29 +218,31 @@ end
         end
         host, port = Sockets.getsockname(server.listener.server)
         baseurl = "http://$(host):$(port)"
-        config = Configuration(; baseurl)
+        settings = Dict(
+            "llm" => Dict("baseurl" => baseurl, "path" => "/api/v1/chat", "model" => "qwen/qwen3.6-27b", "password" => "", "timeout" => 120),
+        )
         page = "Relative strength index is a momentum trading indicator used to spot overbought and oversold conditions."
         try
             # Warm-up
             sysprompt = "You extract trading strategies."
             inp = "Output JSON."
             request(;
-                model=config.model,
+                model=settings["llm"]["model"],
                 systemprompt=sysprompt,
                 input=string(inp, "\n\n", page),
-                baseurl=config.baseurl,
-                path=config.path,
-                password=config.password,
-                timeout=config.timeoutseconds,
+                baseurl=settings["llm"]["baseurl"],
+                path=settings["llm"]["path"],
+                password=settings["llm"]["password"],
+                timeout=settings["llm"]["timeout"],
             )
             benchmark = @benchmark request(;
-                model=\$config.model,
+                model=\$settings["llm"]["model"],
                 systemprompt=\$sysprompt,
                 input=string(\$inp, "\n\n", \$page),
-                baseurl=\$config.baseurl,
-                path=\$config.path,
-                password=\$config.password,
-                timeout=\$config.timeoutseconds,
+                baseurl=\$settings["llm"]["baseurl"],
+                path=\$settings["llm"]["path"],
+                password=\$settings["llm"]["password"],
+                timeout=\$settings["llm"]["timeout"],
             ) samples=100 seconds=5
             time = median(benchmark).time / 1e9 * 1_000  # ms
             display(benchmark)

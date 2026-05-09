@@ -7,15 +7,24 @@ using Test
 
 function llmserver(respond; seed="seed content")
     requests = Channel{Dict{String,Any}}(8)
-    server = HTTP.serve!(ip"127.0.0.1", 0; verbose=false) do request::HTTP.Request
-        request.method == "GET" && return HTTP.Response(200, seed)
-        payload = JSON.parse(String(request.body))
+    server = HTTP.serve!(ip"127.0.0.1", 0; verbose=false) do req::HTTP.Request
+        req.method == "GET" && return HTTP.Response(200, seed)
+        payload = JSON.parse(String(req.body))
         put!(requests, payload)
         HTTP.Response(200, JSON.json(respond(payload)))
     end
     host, port = getsockname(server.listener.server)
     (server=server, requests=requests, baseurl="http://$(host):$(Int(port))")
 end
+
+testsettings(baseurl; languages=["eng"], outputpath="research.md") = Dict(
+    "crawl" => Dict("languages" => languages),
+    "pipeline" => Dict("capacity" => 100, "threshold" => 0.6, "dedupe_capacity" => 1000, "query" => "", "keywords" => String[]),
+    "embedding" => Dict("model" => "minishlab/potion-multilingual-128M"),
+    "llm" => Dict("baseurl" => baseurl, "path" => "/api/v1/chat", "model" => "qwen/qwen3.6-27b", "password" => "", "timeout" => 120),
+    "output" => Dict("path" => outputpath),
+    "prompts" => Dict("system" => "", "input" => "", "local_system" => "", "local_input" => ""),
+)
 
 excerpt(text, language, score=0.0) = WET(
     MonsieurPapin.Snippet("https://example.com", Val(32)),
@@ -55,17 +64,17 @@ end
     end
 
     try
-        config = Configuration(; baseurl=service.baseurl)
+        settings = testsettings(service.baseurl)
         sysprompt = "You extract trading strategies."
-        inp = "Output JSON: {\"skip\": true} or {\"skip\": false}"
+        inp = "Output JSON."
         data = request(;
-            model=config.model,
+            model=settings["llm"]["model"],
             systemprompt=sysprompt,
             input=string(inp, "\n\n", "page text"),
-            baseurl=config.baseurl,
-            path=config.path,
-            password=config.password,
-            timeout=config.timeoutseconds,
+            baseurl=settings["llm"]["baseurl"],
+            path=settings["llm"]["path"],
+            password=settings["llm"]["password"],
+            timeout=settings["llm"]["timeout"],
         )
         @test get_message(data) == "strategy"
         req = take!(service.requests)
@@ -73,20 +82,20 @@ end
         @test req["system_prompt"] == sysprompt
 
         data = request(;
-            model=config.model,
+            model=settings["llm"]["model"],
             systemprompt="You translate text accurately. Output only the translation.",
             input="Translate the following text into the language identified by the Common Crawl WET language code deu. Output only the translated text.\n\nhello",
-            baseurl=config.baseurl,
-            path=config.path,
-            password=config.password,
-            timeout=config.timeoutseconds,
+            baseurl=settings["llm"]["baseurl"],
+            path=settings["llm"]["path"],
+            password=settings["llm"]["password"],
+            timeout=settings["llm"]["timeout"],
         )
         @test get_message(data) == "hallo"
         req = take!(service.requests)
         @test req["input"] == "Translate the following text into the language identified by the Common Crawl WET language code deu. Output only the translated text.\n\nhello"
         @test req["system_prompt"] == "You translate text accurately. Output only the translation."
 
-        prompt = MonsieurPapin.prompt(excerpt("page text", "zho,eng", 0.2), config)
+        prompt = MonsieurPapin.prompt(excerpt("page text", "zho,eng", 0.2))
         @test occursin("LANGUAGE: zho,eng", prompt)
     finally
         close(service.server)
@@ -98,10 +107,10 @@ end
     end
 
     try
-        config = Configuration(; baseurl=translated.baseurl, languages=["fra"])
-        MonsieurPapin.bootstrap(config, [translated.baseurl * "/seed"], "Find strategies")
-        @test config.query == "trading strategy"
-        @test config.keywords == ["breakout", "trend"]
+        settings = testsettings(translated.baseurl; languages=["fra"])
+        MonsieurPapin.bootstrap(settings, [translated.baseurl * "/seed"], "Find strategies")
+        @test settings["pipeline"]["query"] == "trading strategy"
+        @test settings["pipeline"]["keywords"] == ["breakout", "trend"]
         req = take!(translated.requests)
         @test occursin("Analyze the following Task and Seed Content.", req["input"])
         @test !isready(translated.requests)
@@ -115,9 +124,9 @@ end
     end
 
     try
-        config = Configuration(; baseurl=untranslated.baseurl, languages=["eng"])
-        MonsieurPapin.bootstrap(config, [untranslated.baseurl * "/seed"], "Find strategies")
-        @test config.keywords == ["breakout", "trend"]
+        settings = testsettings(untranslated.baseurl; languages=["eng"])
+        MonsieurPapin.bootstrap(settings, [untranslated.baseurl * "/seed"], "Find strategies")
+        @test settings["pipeline"]["keywords"] == ["breakout", "trend"]
         req = take!(untranslated.requests)
         @test occursin("Analyze the following Task and Seed Content.", req["input"])
         @test !isready(untranslated.requests)
@@ -131,8 +140,8 @@ end
 
     try
         outputpath = tempname()
-        config = Configuration(; baseurl=emptyservice.baseurl, outputpath=outputpath, languages=["eng"])
-        task = MonsieurPapin.research(config, [emptyservice.baseurl * "/seed"], wetpath(entryrecord("Gardening and cooking only."; uri="https://example.com/none")))
+        settings = testsettings(emptyservice.baseurl; languages=["eng"], outputpath=outputpath)
+        task = MonsieurPapin.research(settings, [emptyservice.baseurl * "/seed"], wetpath(entryrecord("Gardening and cooking only."; uri="https://example.com/none")))
         wait(task)
         @test isfile(outputpath)
         @test isempty(read(outputpath, String))
@@ -152,12 +161,12 @@ end
 
         try
             outputpath = tempname()
-            config = Configuration(; baseurl=researchservice.baseurl, outputpath=outputpath, languages=["eng"])
+            settings = testsettings(researchservice.baseurl; languages=["eng"], outputpath=outputpath)
             path = wetpath(
                 entryrecord("Relative strength index is a momentum trading indicator used to spot overbought and oversold conditions."; uri="https://example.com/rsi"),
                 entryrecord("Tomato gardening for spring."; uri="https://example.com/garden"),
             )
-            task = MonsieurPapin.research(config, [researchservice.baseurl * "/seed"], path)
+            task = MonsieurPapin.research(settings, [researchservice.baseurl * "/seed"], path)
             wait(task)
             report = read(outputpath, String)
             req = take!(researchservice.requests)

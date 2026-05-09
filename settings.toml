@@ -1,0 +1,30 @@
+[crawl]
+path = "https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-08/wet.paths.gz"
+root = "https://data.commoncrawl.org/"
+languages = ["eng", "deu", "rus", "jpn", "zho", "spa", "fra", "por", "ita", "pol"]
+
+[pipeline]
+capacity = 1000
+threshold = 0.6
+dedupe_capacity = 100000
+query = ""
+keywords = []
+
+[embedding]
+model = "minishlab/potion-multilingual-128M"
+
+[llm]
+baseurl = "http://localhost:1234"
+path = "/api/v1/chat"
+model = "qwen/qwen3.6-27b"
+password = ""
+timeout = 120
+
+[output]
+path = "research.md"
+
+[prompts]
+system = "Extract trading strategies, technical indicators, or algorithms from this page."
+input = "Describe any trading strategy, indicator, or algorithm found. Include the source URL and pseudo-code if applicable."
+local_system = "Extract trading strategies or financial indicators from this page."
+local_input = "Describe what you find, with the source URL and any relevant pseudo-code."
