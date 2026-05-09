@@ -42,8 +42,6 @@ config = Configuration(
     path           = "/api/v1/chat",
     model          = "qwen/qwen3.6-27b",
     password       = "",                             # API key if needed
-    systemprompt   = "If a trading strategy exists, describe it + pseudo-code.",
-    input          = "Evaluate this page excerpt for trading strategy relevance.",
     outputpath     = "research.md",
     timeoutseconds = 120,
 )

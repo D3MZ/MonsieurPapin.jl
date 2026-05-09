@@ -10,7 +10,8 @@ request(config::Configuration, page::AbstractString) = Dict(
     "model" => config.model,
     "reasoning" => "off",
     "system_prompt" => config.systemprompt,
-    "input" => string(config.input, "\n\n", page)
+    "input" => string(config.input, "\n\n", page),
+    "response_format" => Dict("type" => "json_object"),
 )
 
 function translate(text::AbstractString, language::AbstractString, config::Configuration)
@@ -66,14 +67,31 @@ end
 
 function complete(page::AbstractString, config::Configuration)
     response = HTTP.post(url(config); headers=headers(config), body=JSON.json(request(config, page)), readtimeout=config.timeoutseconds)
-    body_str = String(response.body)
+    data = JSON.parse(String(response.body))
+    text = extract_content(data)
+    isempty(text) && return ""
     
-    # Parse the server response (which is JSON)
-    data = JSON.parse(body_str)
+    # Parse structured JSON response
+    result = try JSON.parse(stripjson(text)) catch; nothing end
+    isnothing(result) && return ""
+    !(result isa AbstractDict) && return ""
+    get(result, "skip", false) == true && return ""
     
-    # Extract the actual text content from the response structure
-    text_content = extract_content(data)
+    source = get(result, "source", "")
+    name = get(result, "name", "")
+    desc = get(result, "description", "")
+    code = get(result, "code", "")
     
-    # Return the clean text
-    return text_content
+    isempty(name) && isempty(code) && return ""
+    
+    """
+## $(name)
+**Source:** $(source)
+
+$(desc)
+
+```
+$(code)
+```
+"""
 end

@@ -12,8 +12,8 @@ Base.@kwdef mutable struct Configuration
     path::String = "/api/v1/chat"
     model::String = "qwen/qwen3.6-27b"
     password::String = ""
-    systemprompt::String = "If a trading strategy exists then write a small description about it and the trading strategy as pseudo code wrapped in a code fence, otherwise do not output anything."
-    input::String = "Evaluate this page excerpt for trading strategy relevance and follow the output rule."
+    systemprompt::String = "You extract trading strategies from web pages. Output ONLY valid JSON."
+    input::String = "Output JSON: {\"skip\": true} if no concrete trading strategy exists. Otherwise: {\"skip\": false, \"source\": \"<URI>\", \"name\": \"<strategy name>\", \"description\": \"<2-3 sentences>\", \"code\": \"<pseudo-code>\"}"
     outputpath::String = "research.md"
     timeoutseconds::Int = 120
 end
