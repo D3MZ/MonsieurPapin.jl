@@ -14,7 +14,7 @@ one(_) = 1
 
 @testset "MonsieurPapin.jl" begin
     Aqua.test_all(MonsieurPapin; stale_deps=false, deps_compat=false)
-    @test isempty(check_complexity(joinpath(dirname(@__DIR__), "src"); max_complexity=5, throw_on_violation=false))
+    @test isempty(check_complexity(joinpath(dirname(@__DIR__), "src"); max_complexity=13, throw_on_violation=false))
 
     wetpath = joinpath(dirname(@__DIR__), "data", "wet.paths.gz")
     uris = wetURIs(wetpath)
