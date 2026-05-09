@@ -16,7 +16,7 @@ Not your ordinary digester: search the entire internet and summarize into a rese
 Note: This is still in active pre-release development
 
 Public Release Milestones
-- [ ] 1/8 full searches completed *(current run: 100K URIs, 6-7 TiB, trading strategies)*
+- [ ] 0/8 full searches completed *(current run in progress: 100K URIs, 6-7 TiB, ETA ~14 days)*
 - [ ] 0/5 machines tested on
 - [ ] 0/3 Major OSs (i.e. Latest Windows, MacOS, & Linux)
 - [ ] Confirmed that different languages can be used in sources.
