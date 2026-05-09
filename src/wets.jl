@@ -245,13 +245,12 @@ blank(bytes) = stop(bytes) < firstindex(bytes)
 digit(byte) = Int(byte - 0x30)
 
 function read!(bytes, stream)
+    eof(stream) && return nothing
     resize!(bytes, 0)
-    while !eof(stream)
-        push!(bytes, read(stream, UInt8))
-        bytes[end] == 0x0a && return bytes
-    end
-    isempty(bytes) ? nothing : bytes
+    Base.append!(bytes, readuntil(stream, 0x0a))
+    bytes
 end
+
 
 function discard(stream, buffer, count)
     rem = count
