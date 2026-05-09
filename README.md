@@ -10,7 +10,9 @@
 
 MonsieurPapin is an experimental Julia research pipeline for searching Common Crawl, ranking relevant pages through progressively more expensive stages, and writing LLM-extracted findings to `research.md`.
 
-The project is named for [Denis Papin](https://en.wikipedia.org/wiki/Denis_Papin), the French Huguenot physicist and inventor associated with the steam digester, an early pressure cooker.
+> A French Huguenot physicist, mathematician and inventor, best known for his pioneering invention of the steam digester, the forerunner of the pressure cooker, the steam engine, the centrifugal pump, and a submersible boat. — [Wikipedia](https://en.wikipedia.org/wiki/Denis_Papin)
+
+This ain't your ordinary digester: Search the entire internet, filter, extract, reduce, and summarize into a "research grade" markdown file on your computer in a matter of weeks… Hopefully!
 
 > [!IMPORTANT]
 > MonsieurPapin is in active pre-release development. This README describes both the current implementation and the target queued pipeline. See [Current Status](#current-status) and [TODO](TODO.md) before running long crawls.
