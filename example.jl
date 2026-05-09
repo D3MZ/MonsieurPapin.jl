@@ -28,7 +28,7 @@ using HTTP: URI
 # --- config ---------------------------------------------------------
 config = Configuration(
     crawlpath  = "data/wet.paths.gz",
-    capacity   = 20,
+    capacity   = 2000,
     threshold  = 0.6,
     query      = "trading strategy price action",
     model      = "qwen/qwen3.6-27b",
@@ -46,8 +46,9 @@ uris     = Channel{String}(NTHREADS * 10) do ch
     end
 end
 
-p       = Progress(TOTAL_URIS; desc="WET URIs: ")
+p       = Progress(TOTAL_URIS; desc="WET URIs: ", output=stderr)
 lk      = ReentrantLock()
+counter = Threads.Atomic{Int}(0)
 deduper = Deduper(config.dedupe_capacity)
 
 raw = Channel{wet_type}(NTHREADS * 100) do out
@@ -62,6 +63,8 @@ raw = Channel{wet_type}(NTHREADS * 100) do out
                 @warn "WET download failed" path e
             end
             lock(lk) do; next!(p); end
+            n = Threads.atomic_add!(counter, 1)
+            n % 1000 == 0 && @info "WET URIs processed" n
         end
     end for _ in 1:NTHREADS]
     foreach(wait, tasks)
