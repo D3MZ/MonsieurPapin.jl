@@ -7,13 +7,16 @@ config = Configuration(
     crawlpath  = "data/wet.paths.gz",
     capacity   = 2000,
     threshold  = 0.6,
-    query      = "trading strategy price action",  # or use embedding(URI("https://...")) below
     model      = "qwen/qwen3.6-27b",
     outputpath = "research.md",
 )
 
-# Alternative: generate query embedding from a seed webpage
-# emb = embedding(URI("https://en.wikipedia.org/wiki/Technical_analysis"), vecpath=config.vecpath)
+# Boostrap: fetch seed URLs, let LLM generate keywords + semantic query
+seed_urls = [
+    "https://www.investopedia.com/articles/forex/10/making-a-rule-based-trading-system.asp",
+    "https://quanthop.com/learn/strategy-building/entry-exit-rules",
+]
+bootstrap(config, seed_urls, "Find trading strategies that can be expressed as pseudo-code with clear entry/exit rules")
 
 const NTHREADS   = Threads.nthreads()
 const TOTAL_URIS = 100_000
