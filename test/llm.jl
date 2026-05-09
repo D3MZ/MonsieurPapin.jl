@@ -55,11 +55,11 @@ end
     end
 
     try
-        config = Settings(; llm = LLM(; baseurl = service.baseurl))
+        config = Configuration(; baseurl=service.baseurl)
         @test complete("page text", config) == "strategy"
         request = take!(service.requests)
-        @test request["input"] == string(config.prompt.input, "\n\npage text")
-        @test request["system_prompt"] == config.prompt.systemprompt
+        @test request["input"] == string(config.input, "\n\npage text")
+        @test request["system_prompt"] == config.systemprompt
 
         @test translate("hello", "deu", config) == "hallo"
         request = take!(service.requests)
@@ -78,10 +78,10 @@ end
     end
 
     try
-        config = Settings(; llm = LLM(; baseurl = translated.baseurl), crawl = Crawl(; languages = ["fra"]))
-        config = MonsieurPapin.bootstrap(config, [translated.baseurl * "/seed"], "Find strategies")
-        @test config.search.query == "trading strategy"
-        @test config.search.keywords == ["breakout", "trend"]
+        config = Configuration(; baseurl=translated.baseurl, languages=["fra"])
+        MonsieurPapin.bootstrap(config, [translated.baseurl * "/seed"], "Find strategies")
+        @test config.query == "trading strategy"
+        @test config.keywords == ["breakout", "trend"]
         request = take!(translated.requests)
         @test occursin("Analyze the following Task and Seed Content.", request["input"])
         @test !isready(translated.requests)
@@ -95,9 +95,9 @@ end
     end
 
     try
-        config = Settings(; llm = LLM(; baseurl = untranslated.baseurl), crawl = Crawl(; languages = ["eng"]))
-        config = MonsieurPapin.bootstrap(config, [untranslated.baseurl * "/seed"], "Find strategies")
-        @test config.search.keywords == ["breakout", "trend"]
+        config = Configuration(; baseurl=untranslated.baseurl, languages=["eng"])
+        MonsieurPapin.bootstrap(config, [untranslated.baseurl * "/seed"], "Find strategies")
+        @test config.keywords == ["breakout", "trend"]
         request = take!(untranslated.requests)
         @test occursin("Analyze the following Task and Seed Content.", request["input"])
         @test !isready(untranslated.requests)
@@ -111,7 +111,7 @@ end
 
     try
         outputpath = tempname()
-        config = Settings(; llm = LLM(; baseurl = emptyservice.baseurl), crawl = Crawl(; languages = ["eng"]), outputpath = outputpath)
+        config = Configuration(; baseurl=emptyservice.baseurl, outputpath=outputpath, languages=["eng"])
         task = MonsieurPapin.research(config, [emptyservice.baseurl * "/seed"], wetpath(entryrecord("Gardening and cooking only."; uri="https://example.com/none")))
         wait(task)
         @test isfile(outputpath)
@@ -132,7 +132,7 @@ end
 
         try
             outputpath = tempname()
-            config = Settings(; llm = LLM(; baseurl = researchservice.baseurl), crawl = Crawl(; languages = ["eng"]), outputpath = outputpath)
+            config = Configuration(; baseurl=researchservice.baseurl, outputpath=outputpath, languages=["eng"])
             path = wetpath(
                 entryrecord("Relative strength index is a momentum trading indicator used to spot overbought and oversold conditions."; uri="https://example.com/rsi"),
                 entryrecord("Tomato gardening for spring."; uri="https://example.com/garden"),

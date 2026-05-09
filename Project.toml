@@ -18,7 +18,6 @@ JlrsCore = "29be08bc-e5fd-4da2-bbc1-72011c6ea2c9"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
 StringViews = "354b36f9-a18e-4713-926e-db85100087ba"
-TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 TranscodingStreams = "3bb67fe8-82b1-5028-8e26-92a6c54297fa"
 
 [compat]

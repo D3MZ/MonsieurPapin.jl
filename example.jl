@@ -3,10 +3,11 @@
 using MonsieurPapin, ProgressMeter
 using HTTP: URI
 
-config = Settings(;
-    crawl = Crawl(; crawlpath = "data/wet.paths.gz", capacity = 2000),
-    search = Search(; threshold = 0.6),
-    llm = LLM(; model = "qwen/qwen3.6-27b"),
+config = Configuration(
+    crawlpath  = "data/wet.paths.gz",
+    capacity   = 2000,
+    threshold  = 0.6,
+    model      = "qwen/qwen3.6-27b",
     outputpath = "research.md",
 )
 
@@ -15,23 +16,12 @@ seed_urls = [
     "https://en.wikipedia.org/wiki/Technical_analysis",
     "https://en.wikipedia.org/wiki/Algorithmic_trading",
 ]
-config = bootstrap(config, seed_urls, "Find trading strategies that can be expressed as pseudo-code with clear entry/exit rules")
+bootstrap(config, seed_urls, "Find trading strategies that can be expressed as pseudo-code with clear entry/exit rules")
 
 # Fallback if bootstrap fails
-if isempty(config.search.query)
-    config = Settings(
-        crawl = config.crawl,
-        search = Search(
-            threshold = config.search.threshold,
-            vecpath = config.search.vecpath,
-            query = "trading strategy entry exit rules indicators pseudo-code",
-            keywords = config.search.keywords,
-        ),
-        llm = config.llm,
-        prompt = config.prompt,
-        outputpath = config.outputpath,
-    )
-    @warn "Bootstrap failed, using fallback query" config.search.query
+if isempty(config.query)
+    config.query = "trading strategy entry exit rules indicators pseudo-code"
+    @warn "Bootstrap failed, using fallback query" config.query
 end
 
 const NTHREADS   = Threads.nthreads()
@@ -41,7 +31,7 @@ wet_type = WET{4096, 12000, 64}
 
 # ── stage 1: parallel WET download → raw channel ───────────────────
 uris = Channel{String}(NTHREADS * 10) do ch
-    for uri in wetURIs(config.crawl.crawlpath; capacity=NTHREADS)
+    for uri in wetURIs(config.crawlpath; capacity=NTHREADS)
         put!(ch, String(uri))
     end
 end
@@ -49,13 +39,13 @@ end
 p       = Progress(TOTAL_URIS; desc="WET URIs: ", output=stderr)
 lk      = ReentrantLock()
 counter = Threads.Atomic{Int}(0)
-deduper = Deduper(config.crawl.dedupe_capacity)
+deduper = Deduper(config.dedupe_capacity)
 
 raw = Channel{wet_type}(NTHREADS * 100) do out
     tasks = [Threads.@spawn begin
         for path in uris
             try
-                for wet in wets(path; capacity=NTHREADS, wetroot=config.crawl.crawlroot)
+                for wet in wets(path; capacity=NTHREADS, wetroot=config.crawlroot)
                     isduplicate(deduper, wet) && continue
                     put!(out, wet)
                 end
@@ -75,8 +65,8 @@ end
 candidates = harvest(config, raw)
 
 # ── stage 3+4: semantic scoring + LLM waterfall ────────────────────
-emb       = embedding(config.search.query; vecpath=config.search.vecpath)
-shortlist = WETQueue(config.crawl.capacity, wet_type)
+emb       = embedding(config.query; vecpath=config.vecpath)
+shortlist = WETQueue(config.capacity, wet_type)
 
 requests  = Channel{Union{Nothing, wet_type}}(NTHREADS)
 responses = Channel{NamedTuple{(:wet, :text), Tuple{wet_type, String}}}(NTHREADS)
@@ -98,7 +88,7 @@ consumer = Threads.@spawn begin
 end
 
 open(config.outputpath, "w") do file
-    scored = relevant!(emb, candidates; capacity=NTHREADS*10, threshold=1.0-config.search.threshold)
+    scored = relevant!(emb, candidates; capacity=NTHREADS*10, threshold=1.0-config.threshold)
     first_result = Ref(true)
 
     for wet in scored
