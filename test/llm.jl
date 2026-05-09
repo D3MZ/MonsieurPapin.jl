@@ -19,7 +19,7 @@ end
 
 testsettings(baseurl; languages=["eng"], outputpath="research.md") = Dict(
     "crawl" => Dict("languages" => languages),
-    "pipeline" => Dict("capacity" => 100, "threshold" => 0.6, "dedupe_capacity" => 1000, "query" => "", "keywords" => String[]),
+    "pipeline" => Dict("capacity" => 100, "threshold" => 0.6, "dedupe_capacity" => 1000, "keywords" => String[]),
     "embedding" => Dict("model" => "minishlab/potion-multilingual-128M"),
     "llm" => Dict("baseurl" => baseurl, "path" => "/api/v1/chat", "model" => "qwen/qwen3.6-27b", "password" => "", "timeout" => 120),
     "output" => Dict("path" => outputpath),
@@ -111,7 +111,7 @@ end
         response = request(;
             model=settings["llm"]["model"],
             systemprompt=settings["prompts"]["bootstrap_system"],
-            input="Analyze the following Task and Seed Content. Produce a JSON object with two fields: 1. \"keywords\": a list of 50 highly specific terms for keyword matching. 2. \"query\": a 1-sentence semantic description of the target content. IMPORTANT: Do not include any thinking process. Do not use markdown. Output ONLY the raw JSON object.\n\nTask: Find strategies\n\nSeed Content:\nseed article",
+            input="Task: Find strategies\n\nSeed Content:\nseed article",
             baseurl=settings["llm"]["baseurl"],
             path=settings["llm"]["path"],
             password=settings["llm"]["password"],
@@ -121,7 +121,7 @@ end
         @test data["query"] == "trading strategy"
         @test data["keywords"] == ["breakout", "trend"]
         req = take!(translated.requests)
-        @test occursin("Analyze the following Task and Seed Content.", req["input"])
+        @test occursin("Task: Find strategies", req["input"])
         @test !isready(translated.requests)
     finally
         close(translated.server)
@@ -137,7 +137,7 @@ end
         response = request(;
             model=settings["llm"]["model"],
             systemprompt=settings["prompts"]["bootstrap_system"],
-            input="Analyze the following Task and Seed Content. Produce a JSON object with two fields: 1. \"keywords\": a list of 50 highly specific terms for keyword matching. 2. \"query\": a 1-sentence semantic description of the target content. IMPORTANT: Do not include any thinking process. Do not use markdown. Output ONLY the raw JSON object.\n\nTask: Find strategies\n\nSeed Content:\nseed article",
+            input="Task: Find strategies\n\nSeed Content:\nseed article",
             baseurl=settings["llm"]["baseurl"],
             path=settings["llm"]["path"],
             password=settings["llm"]["password"],
@@ -146,7 +146,7 @@ end
         data = JSON.parse(get_message(response))
         @test data["keywords"] == ["breakout", "trend"]
         req = take!(untranslated.requests)
-        @test occursin("Analyze the following Task and Seed Content.", req["input"])
+        @test occursin("Task: Find strategies", req["input"])
         @test !isready(untranslated.requests)
     finally
         close(untranslated.server)

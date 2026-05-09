@@ -13,14 +13,7 @@ seeds_text = join([MonsieurPapin.fetchseed(url) for url in seed_urls], "\n\n")
 response = MonsieurPapin.request(;
     model=settings["llm"]["model"],
     systemprompt=settings["prompts"]["bootstrap_system"],
-    input="""Analyze the following Task and Seed Content.
-Produce a JSON object with two fields:
-1. "keywords": a list of 50 highly specific terms for keyword matching.
-2. "query": a 1-sentence semantic description of the target content.
-
-IMPORTANT: Do not include any thinking process. Do not use markdown. Output ONLY the raw JSON object.
-
-Task: Find trading strategies that can be expressed as pseudo-code with clear entry/exit rules
+    input="""Task: Find trading strategies that can be expressed as pseudo-code with clear entry/exit rules
 
 Seed Content:
 $(first(seeds_text, 2000))""",
@@ -31,8 +24,7 @@ $(first(seeds_text, 2000))""",
 )
 data = JSON.parse(MonsieurPapin.get_message(response))
 settings["pipeline"]["keywords"] = data["keywords"]
-settings["pipeline"]["query"] = data["query"]
-@info "Bootstrap complete." query=settings["pipeline"]["query"] keywords_count=length(settings["pipeline"]["keywords"])
+@info "Bootstrap complete." keywords_count=length(settings["pipeline"]["keywords"])
 
 const NTHREADS   = Threads.nthreads()
 const TOTAL_URIS = 100_000
@@ -75,7 +67,7 @@ end
 candidates = harvest(settings, raw)
 
 # ── stage 3+4: semantic scoring + LLM waterfall ────────────────────
-emb       = embedding(settings["pipeline"]["query"]; vecpath=settings["embedding"]["model"])
+emb       = embedding(join(settings["pipeline"]["keywords"], " "); vecpath=settings["embedding"]["model"])
 shortlist = WETQueue(settings["pipeline"]["capacity"], wet_type)
 
 requests  = Channel{Union{Nothing, wet_type}}(NTHREADS)

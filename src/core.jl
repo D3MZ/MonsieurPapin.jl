@@ -98,7 +98,7 @@ Consumes from harvest and maintains a prioritized queue of the most relevant ite
 """
 function semantic(settings, entries::Channel{<:WET})
     shortlist = WETQueue(settings["pipeline"]["capacity"], eltype(entries))
-    emb = embedding(settings["pipeline"]["query"]; vecpath=settings["embedding"]["model"])
+    emb = embedding(join(settings["pipeline"]["keywords"], " "); vecpath=settings["embedding"]["model"])
     
     filtered = relevant!(emb, entries; capacity=Threads.nthreads()*10, threshold=1.0-settings["pipeline"]["threshold"])
     for wet in filtered

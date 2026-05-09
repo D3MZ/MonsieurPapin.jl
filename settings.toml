@@ -7,7 +7,6 @@ languages = ["eng", "deu", "rus", "jpn", "zho", "spa", "fra", "por", "ita", "pol
 capacity = 1000
 threshold = 0.6
 dedupe_capacity = 100000
-query = ""
 keywords = []
 
 [embedding]
@@ -28,4 +27,4 @@ system = "Extract trading strategies, technical indicators, or algorithms from t
 input = "Describe any trading strategy, indicator, or algorithm found. Include the source URL and pseudo-code if applicable."
 local_system = "Extract trading strategies or financial indicators from this page."
 local_input = "Describe what you find, with the source URL and any relevant pseudo-code."
-bootstrap_system = "You are a technical analyst assistant. Output ONLY valid JSON."
+bootstrap_system = "Extract 50 highly specific keywords from the task and seed content."
