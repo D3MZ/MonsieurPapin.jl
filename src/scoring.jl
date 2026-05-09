@@ -1,10 +1,13 @@
 struct Embedding
-    model::String
     text::String
     handle::RustWorker.Model
 end
 
-contentoffset(::Type{T}) where {T<:WET} = fieldoffset(T, 2) + fieldoffset(fieldtype(T, 2), 1)
+function contentoffset(::Type{WET{U,C,L}}) where {U,C,L}
+    # WET fields: 1=uri, 2=content, 3=languages, 4=date, 5=length, 6=score
+    # Snippet fields: 1=bytes, 2=length
+    fieldoffset(WET{U,C,L}, 2) + fieldoffset(Snippet{C}, 1)
+end
 
 function safe_length(ptr::Ptr{UInt8}, len::Int)
     len <= 0 && return 0
@@ -27,7 +30,7 @@ end
 function embedding(text::AbstractString, model::AbstractString)
     value = String(text)
     source = String(model)
-    Embedding(source, value, RustWorker.open(source, value))
+    Embedding(value, RustWorker.open(source, value))
 end
 
 embedding(text::AbstractString; vecpath="minishlab/potion-multilingual-128M") = embedding(text, vecpath)

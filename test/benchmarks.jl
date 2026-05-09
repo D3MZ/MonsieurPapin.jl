@@ -1,5 +1,5 @@
 # DO ADD OR REMOVE COMMENTS FROM THIS FILE
-using MonsieurPapin, BenchmarkTools, Statistics, Test
+using MonsieurPapin, BenchmarkTools, Statistics, Test, HTTP, JSON, Sockets
 import MonsieurPapin: insert!, score, content, gettext, distance, similarity, relevant!
 
 # USE REAL DATASETS, NOT SIMULATED FOR BENCHMARKING.
@@ -109,7 +109,7 @@ end
     end
 
     @testset "Weighted Keyword Matching (Aho-Corasick; Multilingual)" begin
-        weights = MonsieurPapin.weights(seedtext).weights
+        weights = MonsieurPapin.weights(seedtext)
         benchmark = @benchmark sum(_ -> 1, (MonsieurPapin.RustWorker.score(ac, wet) for wet in wets($wetspath))) setup=(ac = AC($weights)) samples=1 seconds=5
         time = median(benchmark).time / 1e9
         display(benchmark)
@@ -119,7 +119,7 @@ end
     end
 
     @testset "Weighted Keyword Matching (Aho-Corasick; Multilingual; Threaded)" begin
-        weights = MonsieurPapin.weights(seedtext).weights
+        weights = MonsieurPapin.weights(seedtext)
         serialbenchmark = @benchmark score(ac, records) setup=(records = collect(wets($wetspath)); ac = AC($weights)) samples=1 seconds=5
         threadedbenchmark = @benchmark sum(score!(scores, ac, records)) setup=(records = collect(wets($wetspath)); ac = AC($weights); scores = Vector{Float64}(undef, length(records))) samples=1 seconds=5
         serialtime = median(serialbenchmark).time / 1e9
@@ -212,7 +212,6 @@ end
     end
 
     @testset "LLM prompt + request overhead" begin
-        import HTTP, JSON, Sockets
         server = HTTP.serve!(ip"127.0.0.1", 0; verbose=false) do req::HTTP.Request
             HTTP.Response(200, JSON.json(Dict("output" => [Dict("type" => "message", "content" => "strategy description")])))
         end

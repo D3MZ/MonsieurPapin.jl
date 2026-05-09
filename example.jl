@@ -8,7 +8,11 @@ settings["pipeline"]["capacity"] = 2000
 # Override crawl path for local testing
 settings["crawl"]["path"] = "data/wet.paths.gz"
 
-# Generate keywords and summaries from seed URLs
+# Bootstrap from seed URLs — customize these for your domain
+const seed_urls = [
+    "https://www.investopedia.com/articles/active-trading/",
+    "https://en.wikipedia.org/wiki/Technical_analysis",
+]
 seedpages = [MonsieurPapin.fetchtext(url) for url in seed_urls]
 keywords = unique(reduce(vcat, [MonsieurPapin.keywords(settings, page) for page in seedpages]))
 summaries = [MonsieurPapin.summary(settings, page) for page in seedpages]
