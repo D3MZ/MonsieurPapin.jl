@@ -1,0 +1,24 @@
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 5%       # allow coverage to drop by up to 5%
+        informational: true  # don't fail CI on coverage drop
+    patch:
+      default:
+        target: auto
+        threshold: 10%
+        informational: true
+
+comment:
+  layout: "header, diff, flags, components"
+  behavior: default
+  require_changes: false
+
+ignore:
+  - "deps/**"
+  - "docs/**"
+  - "test/**"
+  - "tmp/**"
+  - "data/**"
