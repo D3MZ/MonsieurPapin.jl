@@ -1,6 +1,6 @@
 # DO ADD OR REMOVE COMMENTS FROM THIS FILE
 using MonsieurPapin, BenchmarkTools, Statistics, Test
-using MonsieurPapin: insert!, score, content, gettext, distance, similarity, relevant!
+import MonsieurPapin: insert!, score, content, gettext, distance, similarity, relevant!
 
 # USE REAL DATASETS, NOT SIMULATED FOR BENCHMARKING.
 urispath = joinpath(dirname(@__DIR__), "data", "wet.paths.gz")
@@ -236,13 +236,13 @@ end
                 timeout=settings["llm"]["timeout"],
             )
             benchmark = @benchmark request(;
-                model=\$settings["llm"]["model"],
-                systemprompt=\$sysprompt,
-                input=string(\$inp, "\n\n", \$page),
-                baseurl=\$settings["llm"]["baseurl"],
-                path=\$settings["llm"]["path"],
-                password=\$settings["llm"]["password"],
-                timeout=\$settings["llm"]["timeout"],
+                model=$settings["llm"]["model"],
+                systemprompt=$sysprompt,
+                input=string($inp, "\n\n", $page),
+                baseurl=$settings["llm"]["baseurl"],
+                path=$settings["llm"]["path"],
+                password=$settings["llm"]["password"],
+                timeout=$settings["llm"]["timeout"],
             ) samples=100 seconds=5
             time = median(benchmark).time / 1e9 * 1_000  # ms
             display(benchmark)
