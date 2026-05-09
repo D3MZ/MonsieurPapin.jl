@@ -28,15 +28,14 @@ end
 # --- Pipeline Stages ---
 
 """
-    harvest(settings, entries) -> Channel{WET}
+    harvest(keywords, settings, entries) -> Channel{WET}
 
 Stage 1: High-speed deduplication and keyword matching.
 Filters the raw stream down to candidates that contain target keywords.
 """
-function harvest(settings, entries::Channel{<:WET})
+function harvest(keywords::Vector{String}, settings, entries::Channel{<:WET})
     out = Channel{eltype(entries)}(settings["pipeline"]["capacity"])
     deduper = Deduper(settings["pipeline"]["dedupe_capacity"])
-    keywords = settings["pipeline"]["keywords"]
     ac = isempty(keywords) ? nothing : AC(keywords)
     
     Threads.@spawn begin
@@ -120,7 +119,7 @@ wetstream(settings) = wets(settings["crawl"]["path"]; capacity=settings["pipelin
 
 function research(settings)
     raw_wets = wetstream(settings)
-    candidates = harvest(settings, raw_wets)
+    candidates = harvest(settings["pipeline"]["keywords"], settings, raw_wets)
     
     Threads.@spawn begin
         open(settings["output"]["path"], "a") do file
