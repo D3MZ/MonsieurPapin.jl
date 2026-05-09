@@ -160,7 +160,7 @@ Configure the LLM endpoint and model name in `src/core.jl` (`baseurl`, `path`, `
   - [x] llm — prompt construction overhead and end-to-end processing latency.
 - [ ] Ensure tests don't reference large data sets, the data doesn't exist outside of test folder, and scope them small enough that they work with github actions
   - [ ] Ensure github actions runs the test suite.  
-- [ ] Remove query from configuration. Add `Embedding(URI)` constructor that generates an embedding from a webpage.
+- [x] Remove query from configuration. Add `Embedding(URI)` constructor that generates an embedding from a webpage.
 - [ ] WetURIs is ~200KB — can be downloaded entirely rather than streamed.
 - [ ] Fix progress bar time estimate (appears to always increase).
 - [ ] Pass `reasoning: off` in LLM API requests to skip thinking tokens.
