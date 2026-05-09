@@ -12,8 +12,6 @@ Base.@kwdef mutable struct Configuration
     path::String = "/api/v1/chat"
     model::String = "qwen/qwen3.6-27b"
     password::String = ""
-    systemprompt::String = "You extract trading strategies from web pages. Output ONLY valid JSON."
-    input::String = "Output JSON: {\"skip\": true} if no concrete trading strategy exists. Otherwise: {\"skip\": false, \"source\": \"<URI>\", \"name\": \"<strategy name>\", \"description\": \"<2-3 sentences>\", \"code\": \"<pseudo-code>\"}"
     outputpath::String = "research.md"
     timeoutseconds::Int = 120
 end
@@ -69,10 +67,16 @@ function bootstrap(config::Configuration, urls::Vector{<:AbstractString}, task::
     $(first(seeds_text, 2000))
     """
     
-    analysis_config = deepcopy(config)
-    analysis_config.systemprompt = "You are a technical analyst assistant. Output ONLY JSON."
-    
-    response_text = complete(analysis_prompt, analysis_config)
+    response = request(;
+        model=config.model,
+        systemprompt="You are a technical analyst assistant. Output ONLY JSON.",
+        input=analysis_prompt,
+        baseurl=config.baseurl,
+        path=config.path,
+        password=config.password,
+        timeout=config.timeoutseconds,
+    )
+    response_text = extract_content(response)
     
     try
         clean_json = stripjson(response_text)
@@ -207,7 +211,16 @@ function research(config::Configuration)
             while !isempty(shortlist)
                 best_wet = best!(shortlist)
                 @info "Analyzing high-relevance page" uri=uri(best_wet) score=best_wet.score
-                output = complete(prompt(best_wet, config), config)
+                response = request(;
+                    model=config.model,
+                    systemprompt="You extract trading strategies from web pages. Output ONLY valid JSON.",
+                    input=string("""Output JSON: {"skip": true} if no concrete trading strategy exists. Otherwise: {"skip": false, "source": "<URI>", "name": "<strategy name>", "description": "<2-3 sentences>", "code": "<pseudo-code>"}""", "\n\n", prompt(best_wet, config)),
+                    baseurl=config.baseurl,
+                    path=config.path,
+                    password=config.password,
+                    timeout=config.timeoutseconds,
+                )
+                output = extract_content(response)
                 append!(file, output)
             end
         end
@@ -222,8 +235,6 @@ function research(config::Configuration, urls::Vector{<:AbstractString}, wetpath
         retained = length(candidates)
         shortlist = semantic(config, candidates, source)
         report = deepcopy(config)
-        report.systemprompt = "You extract only trading strategies and financial or technical indicators. If the page does not contain a trading strategy or financial or technical indicator, return an empty string and no explanation. If it does, write 1-2 sentences with the source URL and a small pseudo Julia code block."
-        report.input = "Review this page excerpt and follow the output rule."
         entries = length(shortlist)
 
         open(config.outputpath, "w") do file
@@ -231,7 +242,16 @@ function research(config::Configuration, urls::Vector{<:AbstractString}, wetpath
             while !isempty(shortlist)
                 wet = best!(shortlist)
                 @info "Analyzing local page" uri=uri(wet) score=wet.score
-                append!(file, complete(prompt(wet, Val(:local)), report))
+                response = request(;
+                    model=report.model,
+                    systemprompt="You extract only trading strategies and financial or technical indicators. If the page does not contain a trading strategy or financial or technical indicator, return an empty string and no explanation. If it does, write 1-2 sentences with the source URL and a small pseudo Julia code block.",
+                    input=string("Review this page excerpt and follow the output rule.", "\n\n", prompt(wet, Val(:local))),
+                    baseurl=report.baseurl,
+                    path=report.path,
+                    password=report.password,
+                    timeout=report.timeoutseconds,
+                )
+                append!(file, extract_content(response))
             end
         end
 

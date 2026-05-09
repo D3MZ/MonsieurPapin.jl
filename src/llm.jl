@@ -1,26 +1,18 @@
-url(config::Configuration) = string(config.baseurl, config.path)
-
-headers(config::Configuration) =
-    isempty(config.password) ?
-    ["Content-Type" => "application/json"] :
-    ["Content-Type" => "application/json", "Authorization" => "Bearer $(config.password)"]
-
-# Updated to match the specific API format provided: model, system_prompt, input
-request(config::Configuration, page::AbstractString) = Dict(
-    "model" => config.model,
-    "reasoning" => "off",
-    "system_prompt" => config.systemprompt,
-    "input" => string(config.input, "\n\n", page),
-)
-
-function translate(text::AbstractString, language::AbstractString, config::Configuration)
-    translation = deepcopy(config)
-    translation.systemprompt = "You translate text accurately. Output only the translation."
-    translation.input = string("Translate the following text into the language identified by the Common Crawl WET language code ", language, ". Output only the translated text.")
-    complete(text, translation)
+function request(; model::String, systemprompt::String, input::String,
+                  baseurl::String, path::String, password::String="",
+                  timeout::Int=120)
+    body = Dict(
+        "model" => model,
+        "reasoning" => "off",
+        "system_prompt" => systemprompt,
+        "input" => input,
+    )
+    headers = ["Content-Type" => "application/json", "Authorization" => "Bearer $(password)"]
+    response = HTTP.post(string(baseurl, path); headers=headers, body=JSON.json(body), readtimeout=timeout)
+    return JSON.parse(String(response.body))
 end
 
-translate(text::AbstractString, language::AbstractString) = translate(text, language, Configuration())
+
 
 # Deeply extract content from various response structures
 function extract_content(data)
@@ -64,25 +56,4 @@ function stripjson(text::AbstractString)
     return text
 end
 
-function complete(page::AbstractString, config::Configuration)
-    response = HTTP.post(url(config); headers=headers(config), body=JSON.json(request(config, page)), readtimeout=config.timeoutseconds)
-    data = JSON.parse(String(response.body))
-    text = extract_content(data)
-    isempty(text) && return ""
-    
-    # Try structured JSON, fall back to raw text
-    result = try JSON.parse(stripjson(text)) catch; nothing end
-    if result isa AbstractDict && get(result, "skip", false) == true
-        return ""
-    elseif result isa AbstractDict
-        name = get(result, "name", "")
-        code = get(result, "code", "")
-        if !isempty(name) || !isempty(code)
-            source = get(result, "source", "")
-            desc = get(result, "description", "")
-            return "## $(name)\n**Source:** $(source)\n\n$(desc)\n\n\`\`\`\n$(code)\n\`\`\`\n"
-        end
-    end
-    
-    return text
-end
+

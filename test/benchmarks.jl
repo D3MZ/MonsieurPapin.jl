@@ -222,8 +222,26 @@ end
         page = "Relative strength index is a momentum trading indicator used to spot overbought and oversold conditions."
         try
             # Warm-up
-            complete(page, config)
-            benchmark = @benchmark complete($page, $config) samples=100 seconds=5
+            sysprompt = "You extract trading strategies."
+            inp = "Output JSON."
+            request(;
+                model=config.model,
+                systemprompt=sysprompt,
+                input=string(inp, "\n\n", page),
+                baseurl=config.baseurl,
+                path=config.path,
+                password=config.password,
+                timeout=config.timeoutseconds,
+            )
+            benchmark = @benchmark request(;
+                model=\$config.model,
+                systemprompt=\$sysprompt,
+                input=string(\$inp, "\n\n", \$page),
+                baseurl=\$config.baseurl,
+                path=\$config.path,
+                password=\$config.password,
+                timeout=\$config.timeoutseconds,
+            ) samples=100 seconds=5
             time = median(benchmark).time / 1e9 * 1_000  # ms
             display(benchmark)
             requests_per_second = round(1 / (median(benchmark).time / 1e9))

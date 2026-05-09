@@ -78,7 +78,16 @@ consumer = Threads.@spawn begin
     for wet in requests
         wet === nothing && break
         try
-            output = complete(MonsieurPapin.prompt(wet, config), config)
+            response = MonsieurPapin.request(;
+                model=config.model,
+                systemprompt="You extract trading strategies from web pages. Output ONLY valid JSON.",
+                input=string("""Output JSON: {"skip": true} if no concrete trading strategy exists. Otherwise: {"skip": false, "source": "<URI>", "name": "<strategy name>", "description": "<2-3 sentences>", "code": "<pseudo-code>"}""", "\n\n", MonsieurPapin.prompt(wet, config)),
+                baseurl=config.baseurl,
+                path=config.path,
+                password=config.password,
+                timeout=config.timeoutseconds,
+            )
+            output = MonsieurPapin.extract_content(response)
             put!(responses, (wet=wet, text=output))
         catch e
             @warn "LLM request failed" uri=MonsieurPapin.uri(wet) e
