@@ -47,7 +47,7 @@ uris  = collect(wetURIs(config.crawlpath; capacity=config.capacity))
 p     = Progress(length(uris); desc="WET URIs: ")
 
 wet_type = WET{4096, 12000, 64}
-raw = Channel{wet_type}(config.capacity) do out
+raw = Channel{wet_type}(1000) do out
     for path in uris
         for wet in wets(path; capacity=config.capacity, wetroot=config.crawlroot)
             put!(out, wet)
