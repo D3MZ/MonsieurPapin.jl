@@ -160,13 +160,10 @@ function semantic(config::Configuration, entries::Channel{<:WET})
     shortlist = WETQueue(config.capacity, eltype(entries))
     emb = embedding(config.query; vecpath=config.vecpath)
     
-    # This stage runs until entries is closed
-    for wet in entries
-        # Score via embedding model (cosine similarity)
-        s = distance(emb, wet)
-        if s >= config.threshold
-            insert!(shortlist, update(s, wet))
-        end
+    # Parallel scoring via relevant!
+    filtered = relevant!(emb, entries; capacity=Threads.nthreads()*10, threshold=1.0-config.threshold)
+    for wet in filtered
+        insert!(shortlist, wet)
     end
     shortlist
 end
