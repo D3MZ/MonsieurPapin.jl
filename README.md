@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.png" alt="MonsieurPapin logo" width="200">
+</p>
+
 # MonsieurPapin
 
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://D3MZ.github.io/MonsieurPapin.jl/stable/)
@@ -19,10 +23,9 @@ Public Release Milestones
 
 ## Known Issues
 
-1. **semantic() blocks pipeline** — `semantic()` drains the entire candidate channel before returning, so the LLM stage only starts after ALL pages are scored. Should be a waterfall: LLM pulls from the frontier as soon as it fills, while scoring continues concurrently. See `scripts/live_march.jl` for the correct streaming pattern.
-2. **Aho-Corasick keyword stage not enabled** — `config.keywords` defaults to empty, bypassing the fast AC keyword matcher. Bootstrapping from seed URLs (`bootstrap()`) populates keywords, but `example.jl` doesn't call it.
-3. **JULIA_NUM_THREADS defaults to 1** — must set `export JULIA_NUM_THREADS=auto` or a specific count before running. The pipeline uses `Threads.nthreads()` for parallel downloads and scoring.
-4. **Progress bar may not render in tmux** — `ProgressMeter` output to stderr can be lost in tmux sessions. Log-based progress (`@info` every N items) is more reliable for long runs.
+1. **semantic() in core.jl blocks** — the library function `semantic()` drains the entire candidate channel before returning. `example.jl` works around this with a waterfall pattern (LLM consumer runs in a background task while scoring continues), but `research()` still blocks. Fix: refactor `semantic()` into a streaming primitive.
+2. **Aho-Corasick keyword stage not enabled by default** — `config.keywords` defaults to empty, bypassing the fast AC keyword matcher. Call `bootstrap(config, seed_urls, task_description)` to auto-populate keywords from seed pages.
+3. **JULIA_NUM_THREADS defaults to 1** — the pipeline uses `Threads.nthreads()` for parallelism. Set `export JULIA_NUM_THREADS=auto` (or a specific count) before running. On a 24-core machine this means `export JULIA_NUM_THREADS=24`.
 
 ## Quick start
 
