@@ -14,6 +14,10 @@ Base.@kwdef mutable struct Configuration
     password::String = ""
     outputpath::String = "research.md"
     timeoutseconds::Int = 120
+    systemprompt::String = "You extract trading strategies from web pages. Output ONLY valid JSON."
+    inputtemplate::String = """Output JSON: {"skip": true} if no concrete trading strategy exists. Otherwise: {"skip": false, "source": "<URI>", "name": "<strategy name>", "description": "<2-3 sentences>", "code": "<pseudo-code>"}"""
+    localsystemprompt::String = "You extract only trading strategies and financial or technical indicators. If the page does not contain a trading strategy or financial or technical indicator, return an empty string and no explanation. If it does, write 1-2 sentences with the source URL and a small pseudo Julia code block."
+    localinput::String = "Review this page excerpt and follow the output rule."
 end
 
 struct TokenWeights
@@ -212,8 +216,8 @@ function research(config::Configuration)
                 @info "Analyzing high-relevance page" uri=uri(best_wet) score=best_wet.score
                 response = request(;
                     model=config.model,
-                    systemprompt="You extract trading strategies from web pages. Output ONLY valid JSON.",
-                    input=string("""Output JSON: {"skip": true} if no concrete trading strategy exists. Otherwise: {"skip": false, "source": "<URI>", "name": "<strategy name>", "description": "<2-3 sentences>", "code": "<pseudo-code>"}""", "\n\n", prompt(best_wet, config)),
+                    systemprompt=config.systemprompt,
+                    input=string(config.inputtemplate, "\n\n", prompt(best_wet, config)),
                     baseurl=config.baseurl,
                     path=config.path,
                     password=config.password,
@@ -243,8 +247,8 @@ function research(config::Configuration, urls::Vector{<:AbstractString}, wetpath
                 @info "Analyzing local page" uri=uri(wet) score=wet.score
                 response = request(;
                     model=report.model,
-                    systemprompt="You extract only trading strategies and financial or technical indicators. If the page does not contain a trading strategy or financial or technical indicator, return an empty string and no explanation. If it does, write 1-2 sentences with the source URL and a small pseudo Julia code block.",
-                    input=string("Review this page excerpt and follow the output rule.", "\n\n", prompt(wet, Val(:local))),
+                    systemprompt=report.localsystemprompt,
+                    input=string(report.localinput, "\n\n", prompt(wet, Val(:local))),
                     baseurl=report.baseurl,
                     path=report.path,
                     password=report.password,
