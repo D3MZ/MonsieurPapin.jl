@@ -74,9 +74,7 @@ function score(entry::AC{Float64}, pointer::Ptr{UInt8}, length::Integer)
     call(:match_weighted_aho_corasick, entry.handle, UInt(pointer), UInt(length))
 end
 
-function score(entry::AC, text::AbstractString)
-    score(entry, pointer(text), ncodeunits(text))
-end
+score(entry::AC, text::AbstractString) = score(entry, pointer(text), ncodeunits(text))
 
 function open(model::AbstractString, query::AbstractString)
     load()

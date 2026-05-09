@@ -52,6 +52,8 @@ function distance(source::Embedding, wet::WET{U,C,L}) where {U,C,L}
     first(scores)
 end
 
+score(source::Embedding, wet::WET) = update(distance(source, wet), wet)
+
 distance(string1::AbstractString, string2::AbstractString; vecpath="minishlab/potion-multilingual-128M") =
     distance(embedding(string1; vecpath), string2)
 
@@ -76,11 +78,6 @@ function RustWorker.score(entry::RustWorker.AC, wet::WET{U,C,L}) where {U,C,L}
         ptr = Base.unsafe_convert(Ptr{WET{U,C,L}}, reference) + contentoffset(WET{U,C,L})
         RustWorker.score(entry, Ptr{UInt8}(ptr), safe_length(Ptr{UInt8}(ptr), wet.content.length))
     end
-end
-
-function score(source::Embedding, wet::WET)
-    s = distance(source, wet)
-    update(s, wet)
 end
 
 function score!(scores, pointers, lengths, source::Embedding, batch::AbstractVector{T}) where {T<:WET}
@@ -111,12 +108,6 @@ function publish!(filtered, batch, scores, threshold)
     filtered
 end
 
-function publish!(filtered, batch, scores, pointers, lengths, source, threshold)
-    score!(scores, pointers, lengths, source, batch)
-    publish!(filtered, batch, scores, threshold)
-    filtered
-end
-
 function relevant!(source::Embedding, pages::Channel{T}; capacity=Threads.nthreads() * 10, threshold=0.6, batchsize=64) where {T<:WET}
     Channel{T}(capacity) do filtered
         tasks = [
@@ -129,10 +120,14 @@ function relevant!(source::Embedding, pages::Channel{T}; capacity=Threads.nthrea
                 for wet in pages
                     push!(batch, wet)
                     length(batch) == batchsize || continue
-                    publish!(filtered, batch, scores, pointers, lengths, source, threshold)
+                    score!(scores, pointers, lengths, source, batch)
+                    publish!(filtered, batch, scores, threshold)
                 end
 
-                isempty(batch) || publish!(filtered, batch, scores, pointers, lengths, source, threshold)
+                if !isempty(batch)
+                    score!(scores, pointers, lengths, source, batch)
+                    publish!(filtered, batch, scores, threshold)
+                end
             end
             for _ in 1:Threads.nthreads()
         ]

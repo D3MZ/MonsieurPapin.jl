@@ -29,21 +29,15 @@ end
 insert!(queue::WETQueue{<:WET}, channel::Channel{<:WET}) =
     foreach(item -> insert!(queue, item), channel)
 
-function bestindex(values, ranking)
+function Base.pop!(queue::WETQueue)
+    values = queue.heap.valtree
     index = firstindex(values)
     best = first(values)
     for step in Iterators.drop(eachindex(values), 1)
-        lt(ranking, values[step], best) || continue
+        lt(queue.ranking, values[step], best) || continue
         index = step
         best = values[step]
     end
-    index
-end
-
-function Base.pop!(queue::WETQueue)
-    values = queue.heap.valtree
-    index = bestindex(values, queue.ranking)
-    best = values[index]
     deleteat!(values, index)
     isempty(values) || heapify!(values, queue.heap.ordering)
     best

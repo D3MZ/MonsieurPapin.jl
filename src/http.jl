@@ -1,13 +1,9 @@
 drop(page::AbstractString, pattern) = replace(page, pattern => " ")
 
 function entities(page::AbstractString)
-    page |>
-    text -> replace(text, "&nbsp;" => " ") |>
-    text -> replace(text, "&amp;" => "&") |>
-    text -> replace(text, "&lt;" => "<") |>
-    text -> replace(text, "&gt;" => ">") |>
-    text -> replace(text, "&quot;" => "\"") |>
-    text -> replace(text, "&#39;" => "'")
+    replace(page,
+        "&nbsp;" => " ", "&amp;" => "&", "&lt;" => "<",
+        "&gt;" => ">", "&quot;" => "\"", "&#39;" => "'")
 end
 
 collapse(page::AbstractString) = join(split(page), ' ')
@@ -24,7 +20,4 @@ end
 
 gettext(uri::URI) = gettext(String(HTTP.get(string(uri)).body))
 
-function fetchtext(url::AbstractString)
-    response = HTTP.get(String(url); timeout=30)
-    return gettext(String(response.body))
-end
+fetchtext(url::AbstractString) = gettext(String(HTTP.get(String(url); timeout=30).body))

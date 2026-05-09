@@ -40,27 +40,3 @@ include("llm.jl")
         display(@benchmark sum(_ -> 1, wets($path)))
     end
 end
-
-
-# using CodecZlib
-# path = joinpath(dirname(@__DIR__), "data", "warc.wet.gz")
-# open(path) do file
-#     stream = GzipDecompressorStream(file)
-#     @allocations readline(stream)
-# end
-
-# using CodecZlib
-
-# open(path) do file
-#     stream = GzipDecompressorStream(file)
-#     total = 0
-#     while !eof(stream)
-#         total += @allocations readline(stream)
-#     end
-#     total
-# end
-
-# @allocations begin
-#     for _ in wets(path)
-#     end
-# end
