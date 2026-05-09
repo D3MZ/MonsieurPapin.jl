@@ -31,6 +31,7 @@ function embedding(text::AbstractString, model::AbstractString)
 end
 
 embedding(text::AbstractString; vecpath="minishlab/potion-multilingual-128M") = embedding(text, vecpath)
+embedding(uri::URI; vecpath="minishlab/potion-multilingual-128M") = embedding(gettext(uri), vecpath)
 
 distance(first::Embedding, second::AbstractString) = RustWorker.score(second, first.handle)
 distance(first::Embedding, second::Embedding) = distance(first, second.text)

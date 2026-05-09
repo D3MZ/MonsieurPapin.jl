@@ -7,10 +7,13 @@ config = Configuration(
     crawlpath  = "data/wet.paths.gz",
     capacity   = 2000,
     threshold  = 0.6,
-    query      = "trading strategy price action",
+    query      = "trading strategy price action",  # or use embedding(URI("https://...")) below
     model      = "qwen/qwen3.6-27b",
     outputpath = "research.md",
 )
+
+# Alternative: generate query embedding from a seed webpage
+# emb = embedding(URI("https://en.wikipedia.org/wiki/Technical_analysis"), vecpath=config.vecpath)
 
 const NTHREADS   = Threads.nthreads()
 const TOTAL_URIS = 100_000
