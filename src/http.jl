@@ -30,3 +30,8 @@ function gettext(page::AbstractString)::String
 end
 
 gettext(uri::URI)::String = gettext(String(HTTP.get(string(uri)).body))
+
+function fetchtext(url::AbstractString)
+    response = HTTP.get(String(url); timeout=30)
+    return gettext(String(response.body))
+end
