@@ -39,21 +39,25 @@ const lengthprefix = codeunits("Content-Length:")
 
 # --- Accessors ---
 
-function clean(bytes::AbstractVector{UInt8})
-    kept = length(bytes)
+function utf8_truncate(bytes::AbstractVector{UInt8}, max_len::Int)
+    kept = max_len
     while kept > 0 && (bytes[kept] & 0xc0) == 0x80
         kept -= 1
     end
     if kept > 0 && (bytes[kept] & 0x80) != 0
-        # Check if the leading byte indicates a character that fits
         b = bytes[kept]
         needed = (b & 0xe0) == 0xc0 ? 2 :
                  (b & 0xf0) == 0xe0 ? 3 :
                  (b & 0xf8) == 0xf0 ? 4 : 1
-        if length(bytes) - kept + 1 < needed
+        if max_len - kept + 1 < needed
             kept -= 1
         end
     end
+    kept
+end
+
+function clean(bytes::AbstractVector{UInt8})
+    kept = utf8_truncate(bytes, length(bytes))
     String(bytes[1:kept])
 end
 
@@ -136,19 +140,7 @@ function body(address, tongue, moment, bytes, buffer, stream)
     readbytes!(stream, buffer, kept) == kept || return nothing
     
     if kept > 0 && bytes > kept
-        last_start = kept
-        while last_start > 0 && (buffer[last_start] & 0xc0) == 0x80
-            last_start -= 1
-        end
-        if last_start > 0 && (buffer[last_start] & 0x80) != 0
-            b = buffer[last_start]
-            needed = (b & 0xe0) == 0xc0 ? 2 :
-                     (b & 0xf0) == 0xe0 ? 3 :
-                     (b & 0xf8) == 0xf0 ? 4 : 1
-            if kept - last_start + 1 < needed
-                kept = last_start - 1
-            end
-        end
+        kept = utf8_truncate(buffer, kept)
     end
 
     bytes > min(bytes, contentlimit) && discard(stream, buffer, bytes - min(bytes, contentlimit))
@@ -232,12 +224,12 @@ function matches(bytes, start, stop, text::AbstractString)
     true
 end
 
-function trim(bytes, start, stop)
-    while start <= stop && (bytes[start] == 0x20 || bytes[start] == 0x09)
-        start += 1
+function trim(bytes, left, right)
+    while left <= right && (bytes[left] == 0x20 || bytes[left] == 0x09)
+        left += 1
     end
-    bytes[stop] == 0x0d && (stop -= 1)
-    start:stop
+    bytes[right] == 0x0d && (right -= 1)
+    left:right
 end
 
 stop(bytes) = (i = lastindex(bytes); i >= firstindex(bytes) && bytes[i] == 0x0a && (i -= 1); i >= firstindex(bytes) && bytes[i] == 0x0d && (i -= 1); i)
@@ -256,7 +248,7 @@ function discard(stream, buffer, count)
     rem = count
     while rem > 0
         w = min(rem, length(buffer))
-        readbytes!(stream, buffer, w) == w || return nothing
+        readbytes!(stream, buffer, w)
         rem -= w
     end
     stream

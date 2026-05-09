@@ -1,9 +1,5 @@
 loadsettings(path="settings.toml") = TOML.parsefile(path)
 
-struct TokenWeights
-    weights::Dict{String,Float64}
-end
-
 seed(urls::Vector{<:AbstractString}) = join(filter(page -> !isempty(page), fetchtext.(urls)), "\n\n")
 query(page::AbstractString; limit=2_000) = first(page, min(limit, length(page)))
 normalize(page::AbstractString) = lowercase(Base.Unicode.normalize(page, :NFKC))
@@ -18,9 +14,10 @@ function counts(page::AbstractString)
 end
 
 function weights(page::AbstractString; capacity=128)
-    ranked = sort!(collect(counts(page)); by=entry -> (-last(entry), first(entry)))
-    limited = first(ranked, min(capacity, length(ranked)))
-    TokenWeights(Dict(first(entry) => 1 / sqrt(last(entry)) for entry in limited))
+    entries = collect(counts(page))
+    k = min(capacity, length(entries))
+    ranked = partialsort!(entries, 1:k; by=entry -> (-last(entry), first(entry)))
+    Dict(first(entry) => 1 / sqrt(last(entry)) for entry in ranked[1:k])
 end
 
 
@@ -59,11 +56,11 @@ function harvest(keywords::Vector{String}, settings, entries::Channel{<:WET})
     out
 end
 
-function harvest(settings, entries::Channel{<:WET}, source::TokenWeights; capacity=10)
+function harvest(settings, entries::Channel{<:WET}, source::Dict{String,Float64}; capacity=10)
     shortlist = WETQueue(capacity, eltype(entries), ReverseOrdering(By(score)))
-    isempty(source.weights) && return shortlist
+    isempty(source) && return shortlist
     deduper = Deduper(settings["pipeline"]["dedupe_capacity"])
-    ac = AC(source.weights)
+    ac = AC(source)
 
     try
         for wet in entries
