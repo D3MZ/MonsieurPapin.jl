@@ -55,7 +55,7 @@ end
     @testset "wets language filter" begin
         records = count(wets(wetspath))
         singlelanguage = ["eng"]
-        manylanguages = Configuration().languages
+        manylanguages = Settings().crawl.languages
         emittedsingle = count(wets(wetspath; languages=singlelanguage))
         emittedmany = count(wets(wetspath; languages=manylanguages))
         singlebenchmark = @benchmark sum(_ -> 1, wets($wetspath; languages=$singlelanguage)) samples=1 seconds=5
@@ -218,7 +218,7 @@ end
         end
         host, port = Sockets.getsockname(server.listener.server)
         baseurl = "http://$(host):$(port)"
-        config = Configuration(; baseurl)
+        config = Settings(; llm = LLM(; baseurl))
         page = "Relative strength index is a momentum trading indicator used to spot overbought and oversold conditions."
         try
             # Warm-up

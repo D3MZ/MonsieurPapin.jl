@@ -12,18 +12,17 @@ entryrecord(content; language="eng", uri="https://example.com") =
     content
 
 @testset "core" begin
-    config = Configuration()
-    remote = Configuration(; crawlpath=URI("https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-08/wet.paths.gz"))
-    localconfig = Configuration(; crawlpath="data/wet.paths.gz")
-    @test string(config.crawlpath) == "https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-08/wet.paths.gz"
-    @test remote.crawlpath == URI("https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-08/wet.paths.gz")
-    @test localconfig.crawlpath == "data/wet.paths.gz"
-    @test config.threshold == 0.6
-    @test config.vecpath == "minishlab/potion-multilingual-128M"
-    @test config.path == "/api/v1/chat"
+    config = Settings()
+    @test config.crawl.crawlpath == "https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-08/wet.paths.gz"
+    @test config.search.threshold == 0.6
+    @test config.search.vecpath == "minishlab/potion-multilingual-128M"
+    @test config.llm.path == "/api/v1/chat"
     @test config.outputpath == "research.md"
-    @test config.languages == ["eng", "deu", "rus", "jpn", "zho", "spa", "fra", "por", "ita", "pol"]
-    @test Configuration(; outputpath="notes.md", capacity=3).capacity == 3
+    @test config.crawl.languages == ["eng", "deu", "rus", "jpn", "zho", "spa", "fra", "por", "ita", "pol"]
+
+    custom = Settings(; crawl = Crawl(; capacity = 3), outputpath = "notes.md")
+    @test custom.crawl.capacity == 3
+    @test custom.outputpath == "notes.md"
 
     path = tempname() * ".gz"
     open(path, "w") do file

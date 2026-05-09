@@ -1,0 +1,1 @@
+Output JSON: {"skip": true} if no concrete trading strategy exists. Otherwise: {"skip": false, "source": "<URI>", "name": "<strategy name>", "description": "<2-3 sentences>", "code": "<pseudo-code>"}
