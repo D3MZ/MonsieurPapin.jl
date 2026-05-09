@@ -150,7 +150,7 @@ Configure the LLM endpoint and model name in `src/core.jl` (`baseurl`, `path`, `
 ## TODO
 - [ ] Multi-language native
 - [ ] Optimize the multilingual Model2Vec path (work on bytes without string materialization).
-- [ ] Optimize `read!` in `src/wets.jl` to use block-based I/O (`readuntil!`) with pre-allocated buffers.
+- [x] Optimize `read!` in `src/wets.jl` to use block-based I/O (`readuntil!`) with pre-allocated buffers.
 - [x] `test/benchmarks.jl` measures performance for each stage:
   - [x] wetURIs — URI struct channel throughput.
   - [x] wets — WET struct channel throughput.
