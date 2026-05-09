@@ -79,8 +79,7 @@ function bootstrap(config::Configuration, urls::Vector{<:AbstractString}, task::
     response_text = get_message(response)
     
     try
-        clean_json = stripjson(response_text)
-        data = JSON.parse(clean_json)
+        data = JSON.parse(response_text)
         config.keywords = convert(Vector{String}, data["keywords"])
         config.query = convert(String, data["query"])
         @info "Bootstrap complete." query=config.query keywords_count=length(config.keywords)
