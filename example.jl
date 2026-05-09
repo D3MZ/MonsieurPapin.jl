@@ -4,7 +4,7 @@ using MonsieurPapin, ProgressMeter
 using HTTP: URI
 
 # ═══════════════════════════════════════════════════════════════════
-# QUICK TEST (offline — 25 WET records shipped in repo)
+# QUICK DEMO (offline — 25 WET records shipped in repo)
 # ═══════════════════════════════════════════════════════════════════
 #
 #     config = Configuration(
@@ -18,61 +18,55 @@ using HTTP: URI
 #     end
 
 # ═══════════════════════════════════════════════════════════════════
-# THREE-STAGE PIPELINE
+# THREE-STAGE PIPELINE (with progress bar)
 # ═══════════════════════════════════════════════════════════════════
 #
 # Prerequisites:
-#   1. A running OpenAI-compatible LLM endpoint (e.g. LM Studio at localhost:1234)
-#   2. Internet access — WET files are streamed from commoncrawl.org
+#   1. Running LLM endpoint (e.g. LM Studio at localhost:1234)
+#   2. Internet access — WET files streamed from commoncrawl.org
 #
-# data/wet.paths.gz ships with 100 000 Common Crawl WET paths.
-# Stage 1 (harvest): deduplicate + keyword-match raw WET stream
-# Stage 2 (semantic): score candidates with model2vec embeddings
-# Stage 3 (report):  LLM summarises top-N pages, writes research.md
+# Stages:
+#   1. harvest — deduplicate + keyword-match raw WET stream
+#   2. semantic — score candidates with model2vec embeddings
+#   3. report  — LLM summarises top-N pages, writes research.md
 
 # --- shared config -------------------------------------------------
 config = Configuration(
     crawlpath      = "data/wet.paths.gz",
-    crawlroot      = "https://data.commoncrawl.org/",
     capacity       = 20,
     threshold      = 0.6,
-    vecpath        = "minishlab/potion-multilingual-128M",
     query          = "trading strategy price action",
-    baseurl        = "http://localhost:1234",
-    path           = "/api/v1/chat",
     model          = "qwen/qwen3.6-27b",
-    password       = "",                             # API key if needed
     outputpath     = "research.md",
-    timeoutseconds = 120,
 )
 
 const TOTAL_URIS = 100_000  # data/wet.paths.gz line count
 
-# --- one-shot ------------------------------------------------------
-t = research(config)
-wait(t)
-println("Done → $(config.outputpath)")
+# --- pipeline -------------------------------------------------------
+uris  = collect(wetURIs(config.crawlpath; capacity=config.capacity))
+p     = Progress(length(uris); desc="WET URIs: ")
 
-# --- or manual pipeline with progress bar --------------------------
-#
-# uris  = collect(wetURIs(config.crawlpath; capacity=config.capacity))
-#
-# wet_type = WET{4096, 12000, 64}
-# raw = Channel{wet_type}(config.capacity) do out
-#     @showprogress desc="WET URIs: " for path in uris
-#         for wet in wets(path; capacity=config.capacity, wetroot=config.crawlroot)
-#             put!(out, wet)
-#         end
-#     end
-# end
-#
-# candidates = harvest(config, raw)
-# shortlist  = semantic(config, candidates)
-#
-# @info "Top candidates" count = length(shortlist)
-# while !isempty(shortlist)
-#     wet = best!(shortlist)
-#     @info "LLM analysing" uri = uri(wet) score = wet.score
-#     output = complete(prompt(wet, config), config)
-#     append!(outputpath, output)
-# end
+wet_type = WET{4096, 12000, 64}
+raw = Channel{wet_type}(config.capacity) do out
+    for path in uris
+        for wet in wets(path; capacity=config.capacity, wetroot=config.crawlroot)
+            put!(out, wet)
+        end
+        next!(p)
+    end
+    finish!(p)
+end
+
+candidates = harvest(config, raw)
+shortlist  = semantic(config, candidates)
+
+@info "Top candidates" count = length(shortlist)
+open(config.outputpath, "w") do file
+    while !isempty(shortlist)
+        wet = best!(shortlist)
+        @info "LLM analysing" uri = uri(wet) score = wet.score
+        output = complete(prompt(wet, config), config)
+        append!(file, output)
+    end
+end
+println("Done → $(config.outputpath)")
