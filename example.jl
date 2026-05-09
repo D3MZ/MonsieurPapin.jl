@@ -1,5 +1,5 @@
 #!/usr/bin/env julia
-# example.jl — Entry point for the modular MonsieurPapin pipeline
+# example.jl — Parallel MonsieurPapin pipeline
 using MonsieurPapin, ProgressMeter
 using HTTP: URI
 
@@ -7,59 +7,72 @@ using HTTP: URI
 # QUICK DEMO (offline — 25 WET records shipped in repo)
 # ═══════════════════════════════════════════════════════════════════
 #
-#     config = Configuration(
-#         crawlpath = "data/warc.wet.gz",
-#         capacity  = 5,
-#         threshold = 0.4,
-#         query     = "technology news",
-#     )
+#     config = Configuration(crawlpath="data/warc.wet.gz", capacity=5, query="news")
 #     for wet in wets(config)
 #         println(uri(wet))
 #     end
 
 # ═══════════════════════════════════════════════════════════════════
-# THREE-STAGE PIPELINE (with progress bar)
+# PARALLEL THREE-STAGE PIPELINE
 # ═══════════════════════════════════════════════════════════════════
 #
 # Prerequisites:
 #   1. Running LLM endpoint (e.g. LM Studio at localhost:1234)
 #   2. Internet access — WET files streamed from commoncrawl.org
 #
-# Stages:
-#   1. harvest — deduplicate + keyword-match raw WET stream
-#   2. semantic — score candidates with model2vec embeddings
-#   3. report  — LLM summarises top-N pages, writes research.md
+# Stages (pipelined concurrently):
+#   1. harvest — N threads download WET files, dedupe, keyword-match
+#   2. semantic — embeddings score candidates, maintain top-N queue
+#   3. report  — LLM summarises best pages, writes research.md
 
-# --- shared config -------------------------------------------------
+# --- config ---------------------------------------------------------
 config = Configuration(
-    crawlpath      = "data/wet.paths.gz",
-    capacity       = 20,
-    threshold      = 0.6,
-    query          = "trading strategy price action",
-    model          = "qwen/qwen3.6-27b",
-    outputpath     = "research.md",
+    crawlpath  = "data/wet.paths.gz",
+    capacity   = 20,
+    threshold  = 0.6,
+    query      = "trading strategy price action",
+    model      = "qwen/qwen3.6-27b",
+    outputpath = "research.md",
 )
 
+const NTHREADS   = Threads.nthreads()
 const TOTAL_URIS = 100_000  # data/wet.paths.gz line count
 
-# --- pipeline -------------------------------------------------------
-uris  = collect(wetURIs(config.crawlpath; capacity=config.capacity))
-p     = Progress(length(uris); desc="WET URIs: ")
-
+# --- stage 1: parallel harvest -------------------------------------
 wet_type = WET{4096, 12000, 64}
-raw = Channel{wet_type}(1000) do out
-    for path in uris
-        for wet in wets(path; capacity=config.capacity, wetroot=config.crawlroot)
-            put!(out, wet)
-        end
-        next!(p)
+uris     = Channel{String}(NTHREADS * 10) do ch
+    for uri in wetURIs(config.crawlpath; capacity=NTHREADS)
+        put!(ch, String(uri))
     end
+end
+
+p       = Progress(TOTAL_URIS; desc="WET URIs: ")
+lock    = ReentrantLock()
+deduper = Deduper(config.dedupe_capacity)
+
+raw = Channel{wet_type}(NTHREADS * 100) do out
+    tasks = [Threads.@spawn begin
+        for path in uris
+            try
+                for wet in wets(path; capacity=NTHREADS, wetroot=config.crawlroot)
+                    isduplicate(deduper, wet) && continue
+                    put!(out, wet)
+                end
+            catch e
+                @warn "WET download failed" path e
+            end
+            lock(lock) do; next!(p); end
+        end
+    end for _ in 1:NTHREADS]
+    foreach(wait, tasks)
     finish!(p)
 end
 
+# --- stage 2: semantic scoring -------------------------------------
 candidates = harvest(config, raw)
 shortlist  = semantic(config, candidates)
 
+# --- stage 3: LLM report -------------------------------------------
 @info "Top candidates" count = length(shortlist)
 open(config.outputpath, "w") do file
     while !isempty(shortlist)
@@ -67,6 +80,7 @@ open(config.outputpath, "w") do file
         @info "LLM analysing" uri = uri(wet) score = wet.score
         output = complete(prompt(wet, config), config)
         append!(file, output)
+        flush(file)
     end
 end
 println("Done → $(config.outputpath)")
