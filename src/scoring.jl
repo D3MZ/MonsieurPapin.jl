@@ -15,16 +15,13 @@ function safe_length(ptr::Ptr{UInt8}, len::Int)
     while last_start > 0 && (unsafe_load(ptr, last_start) & 0xc0) == 0x80
         last_start -= 1
     end
-    if last_start > 0 && (unsafe_load(ptr, last_start) & 0x80) != 0
-        b = unsafe_load(ptr, last_start)
-        needed = (b & 0xe0) == 0xc0 ? 2 :
-                 (b & 0xf0) == 0xe0 ? 3 :
-                 (b & 0xf8) == 0xf0 ? 4 : 1
-        if len - last_start + 1 < needed
-            return last_start - 1
-        end
-    end
-    return len
+    last_start == 0 && return len
+    b = unsafe_load(ptr, last_start)
+    (b & 0x80) == 0 && return len
+    needed = (b & 0xe0) == 0xc0 ? 2 :
+             (b & 0xf0) == 0xe0 ? 3 :
+             (b & 0xf8) == 0xf0 ? 4 : 1
+    len - last_start + 1 < needed ? last_start - 1 : len
 end
 
 function embedding(text::AbstractString, model::AbstractString)

@@ -13,20 +13,13 @@ end
 collapse(page::AbstractString) = join(split(page), ' ')
 
 function gettext(page::AbstractString)
-    collapse(
-        entities(
-            drop(
-                drop(
-                    drop(
-                        drop(page, r"<!--.*?-->"s),
-                        r"<script\b[^>]*>.*?</script>"is,
-                    ),
-                    r"<style\b[^>]*>.*?</style>"is,
-                ),
-                r"<[^>]+>",
-            ),
-        ),
-    )
+    page |>
+        p -> drop(p, r"<!--.*?-->"s) |>
+        p -> drop(p, r"<script\b[^>]*>.*?</script>"is) |>
+        p -> drop(p, r"<style\b[^>]*>.*?</style>"is) |>
+        p -> drop(p, r"<[^>]+>") |>
+        entities |>
+        collapse
 end
 
 gettext(uri::URI) = gettext(String(HTTP.get(string(uri)).body))
