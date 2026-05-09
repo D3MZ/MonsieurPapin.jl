@@ -24,7 +24,7 @@ Public Release Milestones
 ## Known Issues
 
 1. **semantic() in core.jl blocks** — the library function `semantic()` drains the entire candidate channel before returning. `example.jl` works around this with a waterfall pattern (LLM consumer runs in a background task while scoring continues), but `research()` still blocks. Fix: refactor `semantic()` into a streaming primitive.
-2. **Aho-Corasick keyword stage not enabled by default** — `config.keywords` defaults to empty, bypassing the fast AC keyword matcher. Call `bootstrap(config, seed_urls, task_description)` to auto-populate keywords from seed pages.
+2. **Aho-Corasick keyword stage not enabled by default** — `config.keywords` defaults to empty, bypassing the fast AC keyword matcher. `example.jl` now calls `bootstrap()` with seed URLs to populate keywords before the pipeline runs.
 3. **JULIA_NUM_THREADS defaults to 1** — the pipeline uses `Threads.nthreads()` for parallelism. Set `export JULIA_NUM_THREADS=auto` (or a specific count) before running. On a 24-core machine this means `export JULIA_NUM_THREADS=24`.
 
 ## Quick start
@@ -148,7 +148,7 @@ Configure the LLM endpoint and model name in `src/core.jl` (`baseurl`, `path`, `
 - **Language-aware** — filter by Common Crawl language codes (`eng`, `deu`, `rus`, `jpn`, `zho`, `spa`, `fra`, `por`, `ita`, `pol` by default).
 
 ## TODO
-- [ ] Multi-language native
+- [x] Multi-language native *(language filtering built into WET parsing + Configuration.languages)*
 - [ ] Optimize the multilingual Model2Vec path (work on bytes without string materialization).
 - [x] Optimize `read!` in `src/wets.jl` to use block-based I/O (`readuntil!`) with pre-allocated buffers.
 - [x] `test/benchmarks.jl` measures performance for each stage:
@@ -162,6 +162,6 @@ Configure the LLM endpoint and model name in `src/core.jl` (`baseurl`, `path`, `
   - [ ] Ensure github actions runs the test suite.  
 - [x] Remove query from configuration. Add `Embedding(URI)` constructor that generates an embedding from a webpage.
 - [ ] WetURIs is ~200KB — can be downloaded entirely rather than streamed.
-- [ ] Fix progress bar time estimate (appears to always increase).
+- [x] Fix progress bar time estimate (appears to always increase).
 - [ ] Pass `reasoning: off` in LLM API requests to skip thinking tokens.
 - [ ] Investigate wrapping this inside of a docker container for easier install
