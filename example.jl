@@ -47,7 +47,7 @@ uris     = Channel{String}(NTHREADS * 10) do ch
 end
 
 p       = Progress(TOTAL_URIS; desc="WET URIs: ")
-lock    = ReentrantLock()
+lk      = ReentrantLock()
 deduper = Deduper(config.dedupe_capacity)
 
 raw = Channel{wet_type}(NTHREADS * 100) do out
@@ -61,7 +61,7 @@ raw = Channel{wet_type}(NTHREADS * 100) do out
             catch e
                 @warn "WET download failed" path e
             end
-            lock(lock) do; next!(p); end
+            lock(lk) do; next!(p); end
         end
     end for _ in 1:NTHREADS]
     foreach(wait, tasks)
