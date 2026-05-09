@@ -1,4 +1,5 @@
 *.code-workspace
+pi-session-*.html
 *.jl.*.cov
 *.jl.cov
 *.jl.mem
