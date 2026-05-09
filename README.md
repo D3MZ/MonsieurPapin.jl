@@ -59,11 +59,12 @@ cd MonsieurPapin.jl
 
 cargo build --release --manifest-path deps/model2vec_rs_worker/Cargo.toml
 
-julia --project scripts/live_march.jl
+julia --project example.jl
 ```
 
-The script will:
+The pipeline will:
 
+- Bootstrap from seed URLs, asking the LLM for multilingual keywords and a semantic query
 - Download the configured Common Crawl WET archive index
 - Stream and decompress WET files
 - Score pages by weighted keyword match
@@ -73,18 +74,7 @@ The script will:
 
 ### Configure
 
-Edit the defaults near the top of `scripts/live_march.jl`:
-
-```julia
-seedurls() = ["https://en.wikipedia.org/wiki/Relative_strength_index"]
-crawlindex() = URI("https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-08/wet.paths.gz")
-outputpath() = "research.md"
-languages() = ["eng"]
-keywordgate() = 10.0
-distancegate() = 0.45
-```
-
-Or customize via `config.toml` at the package root — all defaults live there:
+Edit `config.toml` at the package root — all defaults live there:
 
 ```toml
 outputpath = "research.md"
@@ -106,7 +96,7 @@ For better local throughput, run Julia with more threads:
 
 ```bash
 export JULIA_NUM_THREADS=auto
-julia --project scripts/live_march.jl
+julia --project example.jl
 ```
 
 ## Concept
@@ -151,13 +141,10 @@ Key principles:
 
 ## Current Implementation
 
-The main runnable entry point is `scripts/live_march.jl`. It currently uses weighted Aho-Corasick terms from seed page text, embedding scoring, a `WETQueue` shortlist, and LLM extraction.
-
-`example.jl` demonstrates the broader four-stage shape, including bootstrap and deduplication. It is useful as a reference for the intended architecture.
+The main runnable entry point is `example.jl`. It demonstrates the broader four-stage shape, including bootstrap and deduplication, with weighted Aho-Corasick terms, embedding scoring, a `WETQueue` shortlist, and LLM extraction.
 
 Important current gaps:
 
-- `scripts/live_march.jl` does not run the deduplication stage.
 - Keyword harvest is still a streaming threshold filter in the main path, not a fixed-capacity competing queue.
 - `semantic()` in `src/core.jl` drains its candidate channel before returning.
 - Bootstrap JSON parsing is fragile when the LLM wraps JSON in markdown or extra reasoning text.
@@ -190,8 +177,7 @@ Important current gaps:
 | `src/simhash.jl` | SimHash and deduplication support |
 | `src/RustWorker.jl` | Julia bindings for Rust scoring worker |
 | `deps/model2vec_rs_worker/` | Rust Aho-Corasick and Model2Vec worker |
-| `scripts/live_march.jl` | Primary live crawl script |
-| `example.jl` | Architecture demonstration script |
+| `example.jl` | Primary entry point — bootstrap + waterfall pipeline |
 | `test/` | Unit and integration tests |
 
 ## Design Notes
