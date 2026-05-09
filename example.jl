@@ -38,13 +38,9 @@ deduper = Deduper(settings["pipeline"]["dedupe_capacity"])
 raw = Channel{wet_type}(NTHREADS * 100) do out
     tasks = [Threads.@spawn begin
         for path in uris
-            try
-                for wet in wets(path; capacity=NTHREADS, wetroot=settings["crawl"]["root"])
-                    isduplicate(deduper, wet) && continue
-                    put!(out, wet)
-                end
-            catch e
-                @warn "WET download failed" path e
+            for wet in wets(path; capacity=NTHREADS, wetroot=settings["crawl"]["root"])
+                isduplicate(deduper, wet) && continue
+                put!(out, wet)
             end
             lock(lk) do; next!(p); end
             n = Threads.atomic_add!(counter, 1)
@@ -71,22 +67,17 @@ completed = Threads.Atomic{Int}(0)
 consumer = Threads.@spawn begin
     for wet in requests
         wet === nothing && break
-        try
-            response = MonsieurPapin.request(;
-                model=settings["llm"]["model"],
-                systemprompt=settings["prompts"]["system"],
-                input=string(settings["prompts"]["input"], "\n\n", MonsieurPapin.prompt(wet)),
-                baseurl=settings["llm"]["baseurl"],
-                path=settings["llm"]["path"],
-                password=settings["llm"]["password"],
-                timeout=settings["llm"]["timeout"],
-            )
-            output = MonsieurPapin.get_message(response)
-            put!(responses, (wet=wet, text=output))
-        catch e
-            @warn "LLM request failed" uri=MonsieurPapin.uri(wet) e
-            put!(responses, (wet=wet, text=""))
-        end
+        response = MonsieurPapin.request(;
+            model=settings["llm"]["model"],
+            systemprompt=settings["prompts"]["system"],
+            input=string(settings["prompts"]["input"], "\n\n", MonsieurPapin.prompt(wet)),
+            baseurl=settings["llm"]["baseurl"],
+            path=settings["llm"]["path"],
+            password=settings["llm"]["password"],
+            timeout=settings["llm"]["timeout"],
+        )
+        output = MonsieurPapin.get_message(response)
+        put!(responses, (wet=wet, text=output))
     end
 end
 

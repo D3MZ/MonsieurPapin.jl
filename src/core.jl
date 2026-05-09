@@ -112,16 +112,11 @@ function research(settings)
 
         consumer = Threads.@spawn for wet in requests
             wet === nothing && break
-            try
-                response = request(; model=settings["llm"]["model"], systemprompt=settings["prompts"]["system"],
-                    input=string(settings["prompts"]["input"], "\n\n", prompt(wet)),
-                    baseurl=settings["llm"]["baseurl"], path=settings["llm"]["path"],
-                    password=settings["llm"]["password"], timeout=settings["llm"]["timeout"])
-                put!(responses, (wet=wet, text=get_message(response)))
-            catch e
-                @warn "LLM request failed" uri=uri(wet) e
-                put!(responses, (wet=wet, text=""))
-            end
+            response = request(; model=settings["llm"]["model"], systemprompt=settings["prompts"]["system"],
+                input=string(settings["prompts"]["input"], "\n\n", prompt(wet)),
+                baseurl=settings["llm"]["baseurl"], path=settings["llm"]["path"],
+                password=settings["llm"]["password"], timeout=settings["llm"]["timeout"])
+            put!(responses, (wet=wet, text=get_message(response)))
         end
 
         open(settings["output"]["path"], "a") do file
