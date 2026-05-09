@@ -68,3 +68,21 @@ settings["pipeline"]["query"] = data["query"]
 ```
 
 this will call the LLM twice per URL, but it'll focus the LLM to do 1 job at a time and not a large cost given the entire runtime.
+
+
+----
+
+move this from core.jl to gettext.jl fetchtext(url)
+```julia
+function fetchseed(url::AbstractString)
+    try
+        response = HTTP.get(String(url); timeout=30)
+        return gettext(String(response.body))
+    catch e
+        @warn "Failed to fetch $url: $e"
+        return ""
+    end
+end
+```
+
+rename gettext.jl to http as that's all this is doing. Http and helpers.
