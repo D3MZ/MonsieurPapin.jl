@@ -5,7 +5,7 @@ using Test
 using HTTP: URI
 
 include("scoring.jl")
-include("gettext.jl")
+include("http.jl")
 include("core.jl")
 include("queue.jl")
 include("llm.jl")

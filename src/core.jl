@@ -4,17 +4,7 @@ struct TokenWeights
     weights::Dict{String,Float64}
 end
 
-function fetchseed(url::AbstractString)
-    try
-        response = HTTP.get(String(url); timeout=30)
-        return gettext(String(response.body))
-    catch e
-        @warn "Failed to fetch $url: $e"
-        return ""
-    end
-end
-
-seed(urls::Vector{<:AbstractString}) = join(filter(page -> !isempty(page), fetchseed.(urls)), "\n\n")
+seed(urls::Vector{<:AbstractString}) = join(filter(page -> !isempty(page), fetchtext.(urls)), "\n\n")
 query(page::AbstractString; limit=2_000) = first(page, min(limit, length(page)))
 normalize(page::AbstractString) = lowercase(Base.Unicode.normalize(page, :NFKC))
 tokens(page::AbstractString) = [entry.match for entry in eachmatch(r"[\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}]|[\p{L}\p{N}]+", normalize(page))]
