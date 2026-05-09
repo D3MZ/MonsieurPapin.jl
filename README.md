@@ -16,7 +16,7 @@ Not your ordinary digester: search the entire internet and summarize into a rese
 Note: This is still in active pre-release development
 
 Public Release Milestones
-- [ ] 0/8 full searches completed *(Q: what counts as a full search?)*
+- [ ] 1/8 full searches completed *(current run: 100K URIs, 6-7 TiB, trading strategies)*
 - [ ] 0/5 machines tested on
 - [ ] 0/3 Major OSs (i.e. Latest Windows, MacOS, & Linux)
 - [ ] Confirmed that different languages can be used in sources.
@@ -24,7 +24,7 @@ Public Release Milestones
 ## Known Issues
 
 1. **semantic() in core.jl blocks** — the library function `semantic()` drains the entire candidate channel before returning. `example.jl` works around this with a waterfall pattern (LLM consumer runs in a background task while scoring continues), but `research()` still blocks. Fix: refactor `semantic()` into a streaming primitive.
-2. **Aho-Corasick keyword stage not enabled by default** — `config.keywords` defaults to empty, bypassing the fast AC keyword matcher. `example.jl` now calls `bootstrap()` with seed URLs to populate keywords before the pipeline runs.
+2. **Aho-Corasick keyword stage not enabled by default** — `config.keywords` defaults to empty. `example.jl` calls `bootstrap()` with seed URLs but the LLM often returns non-JSON text, causing the fallback query. The AC matcher only activates when keywords are successfully populated. Needs more robust JSON extraction in `bootstrap()`.
 3. **JULIA_NUM_THREADS defaults to 1** — the pipeline uses `Threads.nthreads()` for parallelism. Set `export JULIA_NUM_THREADS=auto` (or a specific count) before running. On a 24-core machine this means `export JULIA_NUM_THREADS=24`.
 
 ## Quick start
@@ -149,7 +149,7 @@ Configure the LLM endpoint and model name in `src/core.jl` (`baseurl`, `path`, `
 
 ## TODO
 - [x] Multi-language native *(language filtering built into WET parsing + Configuration.languages)*
-- [ ] Optimize the multilingual Model2Vec path (work on bytes without string materialization).
+- [ ] Optimize the multilingual Model2Vec path (work on bytes without string materialization). *(Q: means skip String allocation, pass raw bytes to tokenizer?)*
 - [x] Optimize `read!` in `src/wets.jl` to use block-based I/O (`readuntil!`) with pre-allocated buffers.
 - [x] `test/benchmarks.jl` measures performance for each stage:
   - [x] wetURIs — URI struct channel throughput.
@@ -158,10 +158,10 @@ Configure the LLM endpoint and model name in `src/core.jl` (`baseurl`, `path`, `
   - [x] relevant! — filtering performance and allocation count under load.
   - [x] queue — ingestion and `best!` extraction speed of the frontier.
   - [x] llm — prompt construction overhead and end-to-end processing latency.
-- [ ] Ensure tests don't reference large data sets, the data doesn't exist outside of test folder, and scope them small enough that they work with github actions
-  - [ ] Ensure github actions runs the test suite.  
+- [ ] Ensure tests don't reference large data sets, the data doesn't exist outside of test folder, and scope them small enough that they work with github actions *(tests currently pass locally, need to generate small test fixtures)*
+  - [x] Ensure github actions runs the test suite.
 - [x] Remove query from configuration. Add `Embedding(URI)` constructor that generates an embedding from a webpage.
-- [ ] WetURIs is ~200KB — can be downloaded entirely rather than streamed.
+- [x] WetURIs is ~200KB — can be downloaded entirely rather than streamed.
 - [x] Fix progress bar time estimate (appears to always increase).
-- [ ] Pass `reasoning: off` in LLM API requests to skip thinking tokens.
-- [ ] Investigate wrapping this inside of a docker container for easier install
+- [x] Pass `reasoning: off` in LLM API requests to skip thinking tokens.
+- [ ] Investigate wrapping this inside of a docker container for easier install *(Q: priority?)*
