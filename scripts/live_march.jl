@@ -23,9 +23,9 @@ function harvest(config, urls; limitseconds=Inf, started=time())
     state = ReentrantLock()
     processedfiles = Ref(0)
     firstcandidate = Ref(true)
-    candidates = Channel{wettype()}(config.capacity) do output
+    candidates = Channel{wettype()}(config.crawl.capacity) do output
         try
-            paths = wetURIs(config.crawlpath; capacity=Threads.nthreads())
+            paths = wetURIs(config.crawl.crawlpath; capacity=Threads.nthreads())
             tasks = [
                 Threads.@spawn begin
                     for path in paths
@@ -36,7 +36,7 @@ function harvest(config, urls; limitseconds=Inf, started=time())
                         end
 
                         try
-                            for wet in wets(String(path); capacity=Threads.nthreads(), wetroot=config.crawlroot, languages=config.languages)
+                            for wet in wets(String(path); capacity=Threads.nthreads(), wetroot=config.crawl.crawlroot, languages=config.crawl.languages)
                                 value = MonsieurPapin.RustWorker.score(matcher, wet)
                                 value >= keywordgate() || continue
                                 lock(state) do
@@ -69,7 +69,7 @@ function harvest(config, urls; limitseconds=Inf, started=time())
 end
 
 function semantic(config, seedtext, candidates)
-    source = embedding(MonsieurPapin.query(seedtext); vecpath=config.vecpath)
+    source = embedding(MonsieurPapin.query(seedtext); vecpath=config.search.vecpath)
     relevant!(source, candidates; capacity=Threads.nthreads(), threshold=1.0 - distancegate())
 end
 
@@ -83,9 +83,17 @@ function page(wet)
 end
 
 function consume!(requests, responses, config, started)
-    llm = deepcopy(config)
-    llm.systemprompt = "You extract only trading strategies and financial or technical indicators. If the page does not contain a trading strategy or financial or technical indicator, return an empty string and no explanation. If it does, write 1-2 sentences with the source URL and a small pseudo Julia code block."
-    llm.input = "Review this page excerpt and follow the output rule."
+    prompt = Prompt(;
+        systemprompt = "You extract only trading strategies and financial or technical indicators. If the page does not contain a trading strategy or financial or technical indicator, return an empty string and no explanation. If it does, write 1-2 sentences with the source URL and a small pseudo Julia code block.",
+        input = "Review this page excerpt and follow the output rule.",
+    )
+    llm = Settings(
+        crawl = config.crawl,
+        search = config.search,
+        llm = config.llm,
+        prompt = prompt,
+        outputpath = config.outputpath,
+    )
     firstrequest = Ref(true)
 
     while true
@@ -182,9 +190,12 @@ end
 
 function run(; limitseconds=Inf)
     started = time()
-    config = Configuration(; capacity=Threads.nthreads(), crawlpath=crawlindex(), outputpath=outputpath(), languages=languages())
+    config = Settings(;
+        crawl = Crawl(; capacity = Threads.nthreads(), crawlpath = crawlindex(), languages = languages()),
+        outputpath = outputpath(),
+    )
     urls = seedurls()
-    @info "Starting live March crawl" urls crawlpath = string(config.crawlpath) outputpath = config.outputpath languages = config.languages limitseconds keywordgate = keywordgate() distancegate = distancegate() threads = Threads.nthreads()
+    @info "Starting live March crawl" urls crawlpath = string(config.crawl.crawlpath) outputpath = config.outputpath languages = config.crawl.languages limitseconds keywordgate = keywordgate() distancegate = distancegate() threads = Threads.nthreads()
     harvested = harvest(config, urls; limitseconds, started)
     scored = semantic(config, harvested.seedtext, harvested.candidates)
     results = report(config, scored, started)
