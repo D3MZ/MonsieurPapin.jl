@@ -8,19 +8,31 @@ settings["pipeline"]["capacity"] = 2000
 # Override crawl path for local testing
 settings["crawl"]["path"] = "data/wet.paths.gz"
 
-# Boostrap: fetch seed URLs, let LLM generate keywords + semantic query
-seed_urls = [
-    "https://en.wikipedia.org/wiki/Technical_analysis",
-    "https://en.wikipedia.org/wiki/Algorithmic_trading",
-]
-bootstrap(settings, seed_urls, "Find trading strategies that can be expressed as pseudo-code with clear entry/exit rules")
+# Bootstrap: generate keywords and query from seed URLs
+seeds_text = join([MonsieurPapin.fetchseed(url) for url in seed_urls], "\n\n")
+response = MonsieurPapin.request(;
+    model=settings["llm"]["model"],
+    systemprompt=settings["prompts"]["bootstrap_system"],
+    input="""Analyze the following Task and Seed Content.
+Produce a JSON object with two fields:
+1. "keywords": a list of 50 highly specific terms for keyword matching.
+2. "query": a 1-sentence semantic description of the target content.
 
-# Fallback if bootstrap fails
-query = settings["pipeline"]["query"]
-if isempty(query)
-    settings["pipeline"]["query"] = "trading strategy entry exit rules indicators pseudo-code"
-    @warn "Bootstrap failed, using fallback query" settings["pipeline"]["query"]
-end
+IMPORTANT: Do not include any thinking process. Do not use markdown. Output ONLY the raw JSON object.
+
+Task: Find trading strategies that can be expressed as pseudo-code with clear entry/exit rules
+
+Seed Content:
+$(first(seeds_text, 2000))""",
+    baseurl=settings["llm"]["baseurl"],
+    path=settings["llm"]["path"],
+    password=settings["llm"]["password"],
+    timeout=settings["llm"]["timeout"],
+)
+data = JSON.parse(MonsieurPapin.get_message(response))
+settings["pipeline"]["keywords"] = data["keywords"]
+settings["pipeline"]["query"] = data["query"]
+@info "Bootstrap complete." query=settings["pipeline"]["query"] keywords_count=length(settings["pipeline"]["keywords"])
 
 const NTHREADS   = Threads.nthreads()
 const TOTAL_URIS = 100_000

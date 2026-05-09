@@ -33,40 +33,7 @@ function weights(page::AbstractString; capacity=128)
     TokenWeights(Dict(first(entry) => 1 / sqrt(last(entry)) for entry in limited))
 end
 
-function bootstrap(settings, urls::Vector{<:AbstractString}, task::AbstractString)
-    @info "Bootstrapping crawl from seed URLs..." urls
-    seeds_text = join([fetchseed(url) for url in urls], "\n\n")
-    
-    analysis_prompt = """
-    Analyze the following Task and Seed Content.
-    Produce a JSON object with two fields:
-    1. "keywords": a list of 50 highly specific terms for keyword matching.
-    2. "query": a 1-sentence semantic description of the target content.
-    
-    IMPORTANT: Do not include any thinking process. Do not use markdown. Output ONLY the raw JSON object.
-    
-    Task: $task
-    
-    Seed Content:
-    $(first(seeds_text, 2000))
-    """
-    
-    response = request(;
-        model=settings["llm"]["model"],
-        systemprompt="You are a technical analyst assistant. Output ONLY JSON.",
-        input=analysis_prompt,
-        baseurl=settings["llm"]["baseurl"],
-        path=settings["llm"]["path"],
-        password=settings["llm"]["password"],
-        timeout=settings["llm"]["timeout"],
-    )
-    response_text = get_message(response)
-    
-    data = JSON.parse(response_text)
-    settings["pipeline"]["keywords"] = convert(Vector{String}, data["keywords"])
-    settings["pipeline"]["query"] = convert(String, data["query"])
-    @info "Bootstrap complete." query=settings["pipeline"]["query"] keywords_count=length(settings["pipeline"]["keywords"])
-end
+
 
 # --- Pipeline Stages ---
 
