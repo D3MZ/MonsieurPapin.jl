@@ -14,7 +14,7 @@
 - [x] OpenAI-compatible LLM integration
 
 ## Architecture
-
+- [ ] Replace Configuration struct with a toml file.
 - [ ] Convert keyword harvest from a streaming threshold filter to a competing `WETQueue`.
 - [ ] Convert deduplication from a hard filter to a soft SimHash-ranked queue.
 - [ ] Add deduplication to `scripts/live_march.jl`.
@@ -33,5 +33,4 @@
 ## Testing and Packaging
 
 - [ ] Add small self-contained WARC fixtures for CI.
-- [ ] Investigate Docker packaging and Rust cross-compilation.
 - [ ] Continue optimizing Model2Vec scoring on raw bytes.

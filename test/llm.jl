@@ -56,15 +56,35 @@ end
 
     try
         config = Configuration(; baseurl=service.baseurl)
-        @test complete("page text", config) == "strategy"
-        request = take!(service.requests)
-        @test request["input"] == string(config.input, "\n\npage text")
-        @test request["system_prompt"] == config.systemprompt
+        sysprompt = "You extract trading strategies."
+        inp = "Output JSON: {\"skip\": true} or {\"skip\": false}"
+        data = request(;
+            model=config.model,
+            systemprompt=sysprompt,
+            input=string(inp, "\n\n", "page text"),
+            baseurl=config.baseurl,
+            path=config.path,
+            password=config.password,
+            timeout=config.timeoutseconds,
+        )
+        @test extract_content(data) == "strategy"
+        req = take!(service.requests)
+        @test req["input"] == string(inp, "\n\npage text")
+        @test req["system_prompt"] == sysprompt
 
-        @test translate("hello", "deu", config) == "hallo"
-        request = take!(service.requests)
-        @test request["input"] == "Translate the following text into the language identified by the Common Crawl WET language code deu. Output only the translated text.\n\nhello"
-        @test request["system_prompt"] == "You translate text accurately. Output only the translation."
+        data = request(;
+            model=config.model,
+            systemprompt="You translate text accurately. Output only the translation.",
+            input="Translate the following text into the language identified by the Common Crawl WET language code deu. Output only the translated text.\n\nhello",
+            baseurl=config.baseurl,
+            path=config.path,
+            password=config.password,
+            timeout=config.timeoutseconds,
+        )
+        @test extract_content(data) == "hallo"
+        req = take!(service.requests)
+        @test req["input"] == "Translate the following text into the language identified by the Common Crawl WET language code deu. Output only the translated text.\n\nhello"
+        @test req["system_prompt"] == "You translate text accurately. Output only the translation."
 
         prompt = MonsieurPapin.prompt(excerpt("page text", "zho,eng", 0.2), config)
         @test occursin("LANGUAGE: zho,eng", prompt)
@@ -82,8 +102,8 @@ end
         MonsieurPapin.bootstrap(config, [translated.baseurl * "/seed"], "Find strategies")
         @test config.query == "trading strategy"
         @test config.keywords == ["breakout", "trend"]
-        request = take!(translated.requests)
-        @test occursin("Analyze the following Task and Seed Content.", request["input"])
+        req = take!(translated.requests)
+        @test occursin("Analyze the following Task and Seed Content.", req["input"])
         @test !isready(translated.requests)
     finally
         close(translated.server)
@@ -98,8 +118,8 @@ end
         config = Configuration(; baseurl=untranslated.baseurl, languages=["eng"])
         MonsieurPapin.bootstrap(config, [untranslated.baseurl * "/seed"], "Find strategies")
         @test config.keywords == ["breakout", "trend"]
-        request = take!(untranslated.requests)
-        @test occursin("Analyze the following Task and Seed Content.", request["input"])
+        req = take!(untranslated.requests)
+        @test occursin("Analyze the following Task and Seed Content.", req["input"])
         @test !isready(untranslated.requests)
     finally
         close(untranslated.server)
@@ -140,11 +160,11 @@ end
             task = MonsieurPapin.research(config, [researchservice.baseurl * "/seed"], path)
             wait(task)
             report = read(outputpath, String)
-            request = take!(researchservice.requests)
+            req = take!(researchservice.requests)
             @test !isempty(report)
             @test occursin("https://example.com/rsi", report)
             @test occursin("```julia", report)
-            @test occursin("SOURCE URL: https://example.com/rsi", request["input"])
+            @test occursin("SOURCE URL: https://example.com/rsi", req["input"])
         finally
             close(researchservice.server)
         end
