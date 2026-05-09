@@ -14,26 +14,23 @@
 This ain't your ordinary digester: Search the entire internet, filter, extract, reduce, and summarize into a "research grade" markdown file on your computer in a day or your money back! :P
 
 > [!IMPORTANT]
-> MonsieurPapin is in active pre-release development. This README describes both the current implementation and the target queued pipeline. See [Current Status](#current-status) and [TODO](TODO.md) before running long crawls.
+> MonsieurPapin is in active pre-release development. See [TODO](TODO.md) before running long crawls.
 
-## Current Status
+## Performance Benchmarks
 
-| Area | Status |
-| --- | --- |
-| WET parsing | Implemented |
-| Rust Aho-Corasick scoring | Implemented |
-| Model2Vec embedding scoring | Implemented |
-| LLM extraction | Implemented |
-| Realtime `research.md` output | Implemented |
-| Full queued waterfall architecture | In progress |
-| Cross-machine release validation | Not started |
+Measured on Apple M1 Max (64 GB) + Julia 1.12, single-threaded, on a 21,465-page WET sample from the February 2026 Common Crawl archive (2.1 billion pages, 5.96 TiB compressed).
 
-Public release checklist:
+| Stage | Rate | Bottleneck bound |
+| --- | --- | --- |
+| WET record parsing | 27,100 records/s | 21.5 hours for full crawl |
+| SimHash deduplication | 3,250 records/s | 7.5 days for full crawl |
+| Aho-Corasick keyword scoring | 22,100 records/s | Rust FFI |
+| Model2Vec embedding scoring | +400 records/s | Depends on GPU acceleration |
+| LLM extraction | ~0.6 ms (mock), ~0.1 pages/s (real) | Consumer-bound
 
-- [ ] 0/8 full searches completed
-- [ ] 0/5 machines tested
-- [ ] 0/3 major OSs tested: Windows, macOS, Linux
-- [ ] Multilingual source searches confirmed
+As a waterfall, each stage only processes the top candidates from the previous stage — the pipeline doesn't need to run every page through every stage. The practical throughput is bounded by embedding scoring (+34M pages/day) and LLM extraction, with the LLM being the bottleneck for deep extraction work.
+
+See [test/benchmarks.jl](test/benchmarks.jl) for how to reproduce these numbers.
 
 ## Quick Start
 
@@ -75,23 +72,7 @@ The pipeline will:
 
 ### Configure
 
-Edit `config.toml` at the package root — all defaults live there:
-
-```toml
-outputpath = "research.md"
-
-[crawl]
-crawlpath = "https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-08/wet.paths.gz"
-crawlroot = "https://data.commoncrawl.org/"
-languages = ["eng"]
-
-[llm]
-baseurl = "http://localhost:1234"
-path = "/api/v1/chat"
-model = "qwen/qwen3.6-27b"
-```
-
-Prompt text lives in `prompts/` — edit `system.txt` and `input.txt` to change what the LLM extracts without touching code.
+Edit `settings.toml` at the package root — all defaults live there including prompts, LLM connection, crawl source, and pipeline parameters.
 
 For better local throughput, run Julia with more threads:
 
@@ -100,13 +81,13 @@ export JULIA_NUM_THREADS=auto
 julia --project example.jl
 ```
 
-## Concept
+## Architecture
 
-MonsieurPapin is designed as a fixed-capacity waterfall. Each stage keeps only the best candidates it has seen, then the next stage pulls from that shortlist. Cheap stages reduce the search space before expensive stages run.
+MonsieurPapin is a fixed-capacity waterfall. Each stage keeps the best candidates it has seen, and the next stage pulls from that shortlist. Cheap stages reduce the search space before expensive stages run.
 
 ```mermaid
 flowchart TD
-    A["Common Crawl WET archives"] --> B["Stage 1: deduplication"]
+    A["Common Crawl WET archives (2.1B pages)"] --> B["Stage 1: deduplication"]
     B --> C["Stage 2: keyword scoring"]
     C --> D["Stage 3: embedding similarity"]
     D --> E["Stage 4: LLM extraction"]
@@ -116,29 +97,16 @@ flowchart TD
     G --> D
 ```
 
-The target flow has two phases:
-
-1. **Bootstrap**: fetch seed URLs, ask an LLM for multilingual keywords and a semantic query, then seed the keyword and embedding stages.
-2. **Waterfall**: stream Common Crawl and move candidates through deduplication, keyword, embedding, and LLM queues.
-
-## Target Architecture
-
-Every stage is intended to be a bounded priority queue:
-
-| Stage | Purpose | Ranking signal | Target capacity |
+| Stage | Purpose | Signal | Capacity |
 | --- | --- | --- | --- |
-| 1. Deduplication | Prefer original content over near-duplicates | SimHash uniqueness | 100K |
-| 2. Keyword | Keep pages with the strongest domain keyword matches | Aho-Corasick score | 100K |
-| 3. Embedding | Keep pages closest to the semantic query | Model2Vec cosine distance | 1K |
-| 4. LLM | Extract useful research findings | LLM relevance judgment | Consumer-bound |
+| 1. Dedup | Prefer original content | SimHash uniqueness | 100K |
+| 2. Keyword | Strongest domain keyword matches | Aho-Corasick score | 100K |
+| 3. Embedding | Closest to the semantic query | Model2Vec cosine distance | 1K |
+| 4. LLM | Extract research findings | LLM relevance | Consumer-bound |
 
-Key principles:
+**Key principles**: bounded queues evict lower-ranked candidates when full; expensive stages process the best survivors from the previous stage; near-duplicates compete rather than being hard-dropped.
 
-- **Bounded queues, not unbounded streams**: each stage evicts lower-ranked candidates when full.
-- **Pull from the best candidate**: expensive stages process the best survivors from the previous stage.
-- **Soft deduplication**: near-duplicates should compete, not be dropped solely because they appear later.
-- **Multilingual search**: keyword generation and embeddings should work across Common Crawl languages.
-- **Local-first extraction**: LLM calls use an OpenAI-compatible API endpoint, so local servers can be used.
+
 
 ## Current Implementation
 
@@ -150,33 +118,7 @@ Important current gaps:
 - `semantic()` in `src/core.jl` drains its candidate channel before returning.
 - Bootstrap JSON parsing is fragile when the LLM wraps JSON in markdown or extra reasoning text.
 
-## What to Expect
 
-- The first keyword candidate should usually appear within about 40 seconds.
-- The first LLM extraction request should follow shortly after semantic scoring begins.
-- Progress bars show WET file progress and page counts.
-- `research.md` grows while the crawl is running.
-- A full crawl can take days on typical home broadband.
-
-## Performance
-
-Benchmarks measured on an Apple M1 Max (64 GB) with Julia 1.12, single-threaded, using a 21,465-page WET sample from the February 2026 Common Crawl archive.
-
-| Stage | Operation | Rate | Detail |
-| --- | --- | --- | --- |
-| 1. WET URI parsing | Gzip decompression + line split | **471,000 paths/s** | 212 ms for 100K WET paths |
-| 2. WET record parsing | WARC header + body extraction | **27,100 records/s** | 21,465 records in 0.79 s (zero allocation) |
-| 2. Deduplication | SimHash 64-bit fingerprinting | **3,250 records/s** | 3-gram shingles, single-threaded |
-| 2. Keyword scoring | Aho-Corasick (26 keywords) | **22,100 records/s** | Rust FFI, multilingual patterns |
-| 3. Embedding scoring | Model2Vec cosine distance | **+400 records/s** | `potion-multilingual-128M`, depends on model |
-| 4. LLM extraction | OpenAI-compatible POST | **~0.6 ms** | Mock server latency; real LLM depends on model |
-| 5. Queue drain | Priority queue extract | **+1,000,000 pops/s** | `WETQueue` heap extraction |
-
-Model2Vec and LLM performance depend on your specific hardware and model choice:
-- Embedding scoring scales with batch size and GPU acceleration (Metal/CUDA)
-- LLM extraction throughput is consumer-bound — expect 0.1 pages/s on typical hardware
-
-A full crawl over 2.1 billion pages is dominated by WET download bandwidth (~25h on gigabit). The pipeline can process the full archive in about the same time, with the LLM extraction stage being the bottleneck for deep analysis.
 
 ## Models
 
@@ -188,42 +130,26 @@ A full crawl over 2.1 billion pages is dominated by WET download bandwidth (~25h
 ## Project Layout
 
 | Path | Purpose |
-| --- | --- |
-| `config.toml` | Default configuration (crawl, search, llm, prompt) |
-| `prompts/` | System prompt and LLM input template files |
-| `src/core.jl` | Settings struct, bootstrap, harvest, semantic orchestration |
-| `src/scoring.jl` | Relevance scoring helpers |
-| `src/queue.jl` | Fixed-capacity `WETQueue` |
-| `src/wets.jl` | WET record parsing |
-| `src/simhash.jl` | SimHash and deduplication support |
-| `src/RustWorker.jl` | Julia bindings for Rust scoring worker |
-| `deps/model2vec_rs_worker/` | Rust Aho-Corasick and Model2Vec worker |
-| `example.jl` | Primary entry point — bootstrap + waterfall pipeline |
+| `settings.toml` | All configuration (crawl, LLM, pipeline, prompts) |
+| `src/core.jl` | Pipeline orchestration (harvest, semantic, research) |
+| `src/llm.jl` | OpenAI-compatible API client (`request`, `keywords`, `summary`) |
+| `src/http.jl` | HTML→text extraction, HTTP fetch utilities |
+| `src/scoring.jl` | Embedding and distance helpers |
+| `src/queue.jl` | Fixed-capacity `WETQueue` priority heap |
+| `src/wets.jl` | WET record parsing and streaming |
+| `src/wetURIs.jl` | WET path list parsing (local or HTTP) |
+| `src/simhash.jl` | SimHash deduplication |
+| `src/RustWorker.jl` | Julia→Rust FFI for scoring |
+| `deps/model2vec_rs_worker/` | Rust Aho-Corasick + Model2Vec worker |
+| `example.jl` | Entry point — waterfall pipeline |
 | `test/` | Unit and integration tests |
 
-## Design Notes
 
-- **Zero-allocation WET parsing**: WARC records are parsed into fixed-size structs.
-- **Rust FFI for hot paths**: keyword matching and embedding similarity run outside Julia.
-- **Language-aware filtering**: `WARC-Identified-Content-Language` is used to skip unsupported languages.
-- **Realtime output**: extracted findings are appended as the crawl runs.
-- **OpenAI-compatible API**: extraction works with local or remote chat servers that expose a compatible endpoint.
 
 ## Known Issues
 
-1. **Thread count defaults to 1**
-
-   Set `JULIA_NUM_THREADS=auto` or a specific thread count before running long crawls.
-
-2. **Bootstrap JSON parsing is brittle**
-
-   `stripjson()` uses a simple first-brace to last-brace fallback. Markdown fences and reasoning blocks can break parsing.
-
-3. **The library `semantic()` helper blocks**
-
-   `semantic(config, entries)` drains all candidates before returning a queue. The live scripts work around this with a more direct waterfall dispatch pattern.
-
-4. **The target queue architecture is not fully wired**
-
-   The current main path still sends too many keyword-passing pages into embedding scoring.
+1. **Thread count defaults to 1** — Set `JULIA_NUM_THREADS=auto` before running long crawls.
+2. **`semantic()` blocks** — Drains its candidate channel before returning; `example.jl` works around this with direct waterfall dispatch.
+3. **Coarse keyword pass-through** — Too many keyword-passing pages reach the embedding stage before the bounded queue fills.
+4. **Settings mutation** — Pipeline code (e.g. bootstrap keyword generation) mutates the settings dict at runtime.
 
