@@ -11,7 +11,7 @@
 
 > A French Huguenot physicist, mathematician and inventor, best known for his pioneering invention of the steam digester, the forerunner of the pressure cooker, the steam engine, the centrifugal pump, and a submersible boat. — [Wikipedia](https://en.wikipedia.org/wiki/Denis_Papin)
 
-This ain't your ordinary digester: Search the entire internet, filter, extract, reduce, and summarize into a "research grade" markdown file on your computer in a matter of weeks… Hopefully!
+This ain't your ordinary digester: Search the entire internet, filter, extract, reduce, and summarize into a "research grade" markdown file on your computer in a day or your money back! :P
 
 > [!IMPORTANT]
 > MonsieurPapin is in active pre-release development. This README describes both the current implementation and the target queued pipeline. See [Current Status](#current-status) and [TODO](TODO.md) before running long crawls.
