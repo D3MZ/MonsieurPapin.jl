@@ -14,3 +14,29 @@ end
 
 get_message(data) = data["output"][1]["content"]
 
+function keywords(settings, text; limitinput=2000)
+    response = request(;
+        model=settings["llm"]["model"],
+        systemprompt=settings["prompts"]["keywords_system"],
+        input=first(text, limitinput),
+        baseurl=settings["llm"]["baseurl"],
+        path=settings["llm"]["path"],
+        password=settings["llm"]["password"],
+        timeout=settings["llm"]["timeout"],
+    )
+    return JSON.parse(get_message(response))
+end
+
+function summary(settings, text; limit=140)
+    response = request(;
+        model=settings["llm"]["model"],
+        systemprompt=settings["prompts"]["summary_system"],
+        input=string("Summarize in at most $limit characters:\n\n", text),
+        baseurl=settings["llm"]["baseurl"],
+        path=settings["llm"]["path"],
+        password=settings["llm"]["password"],
+        timeout=settings["llm"]["timeout"],
+    )
+    return get_message(response)
+end
+
