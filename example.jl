@@ -95,8 +95,8 @@ open(config.outputpath, "w") do file
         first_result[] && (@info "First result" uri=MonsieurPapin.uri(wet) score=wet.score; first_result[] = false)
         MonsieurPapin.insert!(shortlist, wet)
 
-        # Dispatch best to LLM as queue fills
-        while !MonsieurPapin.isempty(shortlist) && submitted[] < config.capacity && !isfull(requests)
+        # Dispatch best to LLM as queue fills (no dispatch limit)
+        while !MonsieurPapin.isempty(shortlist) && !isfull(requests)
             put!(requests, MonsieurPapin.best!(shortlist))
             submitted[] += 1
         end
@@ -110,7 +110,7 @@ open(config.outputpath, "w") do file
     end
 
     # Drain remaining queue
-    while !MonsieurPapin.isempty(shortlist) && submitted[] < config.capacity && !isfull(requests)
+    while !MonsieurPapin.isempty(shortlist) && !isfull(requests)
         put!(requests, MonsieurPapin.best!(shortlist))
         submitted[] += 1
     end
