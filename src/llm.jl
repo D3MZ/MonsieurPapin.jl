@@ -11,7 +11,6 @@ request(config::Configuration, page::AbstractString) = Dict(
     "reasoning" => "off",
     "system_prompt" => config.systemprompt,
     "input" => string(config.input, "\n\n", page),
-    "response_format" => Dict("type" => "json_object"),
 )
 
 function translate(text::AbstractString, language::AbstractString, config::Configuration)
@@ -71,27 +70,19 @@ function complete(page::AbstractString, config::Configuration)
     text = extract_content(data)
     isempty(text) && return ""
     
-    # Parse structured JSON response
+    # Try structured JSON, fall back to raw text
     result = try JSON.parse(stripjson(text)) catch; nothing end
-    isnothing(result) && return ""
-    !(result isa AbstractDict) && return ""
-    get(result, "skip", false) == true && return ""
+    if result isa AbstractDict && get(result, "skip", false) == true
+        return ""
+    elseif result isa AbstractDict
+        name = get(result, "name", "")
+        code = get(result, "code", "")
+        if !isempty(name) || !isempty(code)
+            source = get(result, "source", "")
+            desc = get(result, "description", "")
+            return "## $(name)\n**Source:** $(source)\n\n$(desc)\n\n\`\`\`\n$(code)\n\`\`\`\n"
+        end
+    end
     
-    source = get(result, "source", "")
-    name = get(result, "name", "")
-    desc = get(result, "description", "")
-    code = get(result, "code", "")
-    
-    isempty(name) && isempty(code) && return ""
-    
-    """
-## $(name)
-**Source:** $(source)
-
-$(desc)
-
-```
-$(code)
-```
-"""
+    return text
 end
