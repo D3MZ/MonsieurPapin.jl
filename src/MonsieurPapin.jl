@@ -5,7 +5,7 @@ using DataStructures: BinaryHeap
 using HTTP: URI
 export URI
 export WET, WETQueue, wetURIs, wets, Configuration, Embedding, embedding, distance, score, request, gettext, language, languages, isrelevant, relevant!, best!, best, research, harvest, semantic, append!, prompt, bootstrap, AC, simhash, Deduper, isduplicate
-export get_message, stripjson
+export get_message
 
 
 include("wetURIs.jl")

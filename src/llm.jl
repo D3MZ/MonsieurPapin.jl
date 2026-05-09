@@ -14,15 +14,6 @@ end
 
 
 
-function get_message(data)
-    for entry in data["output"]
-        entry["type"] == "message" && return entry["content"]
-    end
-    return ""
-end
-
-function stripjson(text::AbstractString)
-    return text[findfirst('{', text):findlast('}', text)]
-end
+get_message(data) = data["output"][1]["content"]
 
 
