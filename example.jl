@@ -77,9 +77,9 @@ shortlist  = semantic(config, candidates)
 open(config.outputpath, "w") do file
     while !isempty(shortlist)
         wet = best!(shortlist)
-        @info "LLM analysing" uri = uri(wet) score = wet.score
-        output = complete(prompt(wet, config), config)
-        append!(file, output)
+        @info "LLM analysing" uri = MonsieurPapin.uri(wet) score = wet.score
+        output = complete(MonsieurPapin.prompt(wet, config), config)
+        MonsieurPapin.append!(file, output)
         flush(file)
     end
 end
