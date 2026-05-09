@@ -17,6 +17,13 @@ Public Release Milestones
 - [ ] 0/3 Major OSs (i.e. Latest Windows, MacOS, & Linux)
 - [ ] Confirmed that different languages can be used in sources.
 
+## Known Issues
+
+1. **semantic() blocks pipeline** — `semantic()` drains the entire candidate channel before returning, so the LLM stage only starts after ALL pages are scored. Should be a waterfall: LLM pulls from the frontier as soon as it fills, while scoring continues concurrently. See `scripts/live_march.jl` for the correct streaming pattern.
+2. **Aho-Corasick keyword stage not enabled** — `config.keywords` defaults to empty, bypassing the fast AC keyword matcher. Bootstrapping from seed URLs (`bootstrap()`) populates keywords, but `example.jl` doesn't call it.
+3. **JULIA_NUM_THREADS defaults to 1** — must set `export JULIA_NUM_THREADS=auto` or a specific count before running. The pipeline uses `Threads.nthreads()` for parallel downloads and scoring.
+4. **Progress bar may not render in tmux** — `ProgressMeter` output to stderr can be lost in tmux sessions. Log-based progress (`@info` every N items) is more reliable for long runs.
+
 ## Quick start
 
 ### Prerequisites
