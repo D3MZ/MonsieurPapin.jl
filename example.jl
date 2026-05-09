@@ -8,23 +8,11 @@ settings["pipeline"]["capacity"] = 2000
 # Override crawl path for local testing
 settings["crawl"]["path"] = "data/wet.paths.gz"
 
-# Bootstrap: generate keywords and query from seed URLs
-seeds_text = join([MonsieurPapin.fetchseed(url) for url in seed_urls], "\n\n")
-response = MonsieurPapin.request(;
-    model=settings["llm"]["model"],
-    systemprompt=settings["prompts"]["bootstrap_system"],
-    input="""Task: Find trading strategies that can be expressed as pseudo-code with clear entry/exit rules
-
-Seed Content:
-$(first(seeds_text, 2000))""",
-    baseurl=settings["llm"]["baseurl"],
-    path=settings["llm"]["path"],
-    password=settings["llm"]["password"],
-    timeout=settings["llm"]["timeout"],
-)
-data = JSON.parse(MonsieurPapin.get_message(response))
-settings["pipeline"]["keywords"] = data["keywords"]
-@info "Bootstrap complete." keywords_count=length(settings["pipeline"]["keywords"])
+# Generate keywords and summaries from seed URLs
+seedpages = [MonsieurPapin.fetchseed(url) for url in seed_urls]
+settings["pipeline"]["keywords"] = unique(vcat([MonsieurPapin.keywords(settings, page) for page in seedpages]...))
+summaries = [MonsieurPapin.summary(settings, page) for page in seedpages]
+@info "Seed processing complete." keywords_count=length(settings["pipeline"]["keywords"]) summaries_count=length(summaries)
 
 const NTHREADS   = Threads.nthreads()
 const TOTAL_URIS = 100_000

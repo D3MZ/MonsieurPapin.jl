@@ -23,7 +23,7 @@ testsettings(baseurl; languages=["eng"], outputpath="research.md") = Dict(
     "embedding" => Dict("model" => "minishlab/potion-multilingual-128M"),
     "llm" => Dict("baseurl" => baseurl, "path" => "/api/v1/chat", "model" => "qwen/qwen3.6-27b", "password" => "", "timeout" => 120),
     "output" => Dict("path" => outputpath),
-    "prompts" => Dict("system" => "", "input" => "", "local_system" => "", "local_input" => "", "bootstrap_system" => "You are a technical analyst assistant. Output ONLY valid JSON."),
+    "prompts" => Dict("system" => "", "input" => "", "local_system" => "", "local_input" => "", "keywords_system" => "Extract keywords from this text.", "summary_system" => "Summarize this text."),
 )
 
 excerpt(text, language, score=0.0) = WET(
@@ -102,54 +102,34 @@ end
     end
 
     translated = llmserver(; seed="seed article") do payload
-        message = "{\"keywords\":[\"breakout\",\"trend\"],\"query\":\"trading strategy\"}"
+        message = "[\"breakout\",\"trend\"]"
         Dict("output" => [Dict("type" => "message", "content" => message)])
     end
 
     try
         settings = testsettings(translated.baseurl; languages=["fra"])
-        response = request(;
-            model=settings["llm"]["model"],
-            systemprompt=settings["prompts"]["bootstrap_system"],
-            input="Task: Find strategies\n\nSeed Content:\nseed article",
-            baseurl=settings["llm"]["baseurl"],
-            path=settings["llm"]["path"],
-            password=settings["llm"]["password"],
-            timeout=settings["llm"]["timeout"],
-        )
-        data = JSON.parse(get_message(response))
-        @test data["query"] == "trading strategy"
-        @test data["keywords"] == ["breakout", "trend"]
+        result = keywords(settings, "seed article")
+        @test result == ["breakout", "trend"]
         req = take!(translated.requests)
-        @test occursin("Task: Find strategies", req["input"])
+        @test occursin("seed article", req["input"])
         @test !isready(translated.requests)
     finally
         close(translated.server)
     end
 
-    untranslated = llmserver(; seed="seed article") do payload
-        message = "{\"keywords\":[\"breakout\",\"trend\"],\"query\":\"trading strategy\"}"
-        Dict("output" => [Dict("type" => "message", "content" => message)])
+    unservice = llmserver(; seed="seed article") do payload
+        Dict("output" => [Dict("type" => "message", "content" => "a short summary")])
     end
 
     try
-        settings = testsettings(untranslated.baseurl; languages=["eng"])
-        response = request(;
-            model=settings["llm"]["model"],
-            systemprompt=settings["prompts"]["bootstrap_system"],
-            input="Task: Find strategies\n\nSeed Content:\nseed article",
-            baseurl=settings["llm"]["baseurl"],
-            path=settings["llm"]["path"],
-            password=settings["llm"]["password"],
-            timeout=settings["llm"]["timeout"],
-        )
-        data = JSON.parse(get_message(response))
-        @test data["keywords"] == ["breakout", "trend"]
-        req = take!(untranslated.requests)
-        @test occursin("Task: Find strategies", req["input"])
-        @test !isready(untranslated.requests)
+        settings = testsettings(unservice.baseurl; languages=["eng"])
+        result = MonsieurPapin.summary(settings, "seed article")
+        @test result == "a short summary"
+        req = take!(unservice.requests)
+        @test occursin("Summarize in at most 140 characters", req["input"])
+        @test !isready(unservice.requests)
     finally
-        close(untranslated.server)
+        close(unservice.server)
     end
 
     emptyservice = llmserver(; seed="<html><body>Relative strength index momentum oscillator trading indicator overbought oversold</body></html>") do payload
