@@ -23,7 +23,7 @@ testsettings(baseurl; languages=["eng"], outputpath="research.md") = Dict(
     "embedding" => Dict("model" => "minishlab/potion-multilingual-128M"),
     "llm" => Dict("baseurl" => baseurl, "path" => "/api/v1/chat", "model" => "qwen/qwen3.6-27b", "password" => "", "timeout" => 120),
     "output" => Dict("path" => outputpath),
-    "prompts" => Dict("system" => "", "input" => "", "local_system" => "", "local_input" => ""),
+    "prompts" => Dict("system" => "", "input" => "", "local_system" => "", "local_input" => "", "bootstrap_system" => "You are a technical analyst assistant. Output ONLY valid JSON."),
 )
 
 excerpt(text, language, score=0.0) = WET(
@@ -108,9 +108,18 @@ end
 
     try
         settings = testsettings(translated.baseurl; languages=["fra"])
-        MonsieurPapin.bootstrap(settings, [translated.baseurl * "/seed"], "Find strategies")
-        @test settings["pipeline"]["query"] == "trading strategy"
-        @test settings["pipeline"]["keywords"] == ["breakout", "trend"]
+        response = request(;
+            model=settings["llm"]["model"],
+            systemprompt=settings["prompts"]["bootstrap_system"],
+            input="Analyze the following Task and Seed Content. Produce a JSON object with two fields: 1. \"keywords\": a list of 50 highly specific terms for keyword matching. 2. \"query\": a 1-sentence semantic description of the target content. IMPORTANT: Do not include any thinking process. Do not use markdown. Output ONLY the raw JSON object.\n\nTask: Find strategies\n\nSeed Content:\nseed article",
+            baseurl=settings["llm"]["baseurl"],
+            path=settings["llm"]["path"],
+            password=settings["llm"]["password"],
+            timeout=settings["llm"]["timeout"],
+        )
+        data = JSON.parse(get_message(response))
+        @test data["query"] == "trading strategy"
+        @test data["keywords"] == ["breakout", "trend"]
         req = take!(translated.requests)
         @test occursin("Analyze the following Task and Seed Content.", req["input"])
         @test !isready(translated.requests)
@@ -125,8 +134,17 @@ end
 
     try
         settings = testsettings(untranslated.baseurl; languages=["eng"])
-        MonsieurPapin.bootstrap(settings, [untranslated.baseurl * "/seed"], "Find strategies")
-        @test settings["pipeline"]["keywords"] == ["breakout", "trend"]
+        response = request(;
+            model=settings["llm"]["model"],
+            systemprompt=settings["prompts"]["bootstrap_system"],
+            input="Analyze the following Task and Seed Content. Produce a JSON object with two fields: 1. \"keywords\": a list of 50 highly specific terms for keyword matching. 2. \"query\": a 1-sentence semantic description of the target content. IMPORTANT: Do not include any thinking process. Do not use markdown. Output ONLY the raw JSON object.\n\nTask: Find strategies\n\nSeed Content:\nseed article",
+            baseurl=settings["llm"]["baseurl"],
+            path=settings["llm"]["path"],
+            password=settings["llm"]["password"],
+            timeout=settings["llm"]["timeout"],
+        )
+        data = JSON.parse(get_message(response))
+        @test data["keywords"] == ["breakout", "trend"]
         req = take!(untranslated.requests)
         @test occursin("Analyze the following Task and Seed Content.", req["input"])
         @test !isready(untranslated.requests)

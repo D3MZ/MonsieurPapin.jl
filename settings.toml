@@ -28,3 +28,4 @@ system = "Extract trading strategies, technical indicators, or algorithms from t
 input = "Describe any trading strategy, indicator, or algorithm found. Include the source URL and pseudo-code if applicable."
 local_system = "Extract trading strategies or financial indicators from this page."
 local_input = "Describe what you find, with the source URL and any relevant pseudo-code."
+bootstrap_system = "You are a technical analyst assistant. Output ONLY valid JSON."
