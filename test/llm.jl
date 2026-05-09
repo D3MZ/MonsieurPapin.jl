@@ -67,7 +67,7 @@ end
             password=config.password,
             timeout=config.timeoutseconds,
         )
-        @test extract_content(data) == "strategy"
+        @test get_message(data) == "strategy"
         req = take!(service.requests)
         @test req["input"] == string(inp, "\n\npage text")
         @test req["system_prompt"] == sysprompt
@@ -81,7 +81,7 @@ end
             password=config.password,
             timeout=config.timeoutseconds,
         )
-        @test extract_content(data) == "hallo"
+        @test get_message(data) == "hallo"
         req = take!(service.requests)
         @test req["input"] == "Translate the following text into the language identified by the Common Crawl WET language code deu. Output only the translated text.\n\nhello"
         @test req["system_prompt"] == "You translate text accurately. Output only the translation."

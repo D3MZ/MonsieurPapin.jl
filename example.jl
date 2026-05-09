@@ -87,7 +87,7 @@ consumer = Threads.@spawn begin
                 password=config.password,
                 timeout=config.timeoutseconds,
             )
-            output = MonsieurPapin.extract_content(response)
+            output = MonsieurPapin.get_message(response)
             put!(responses, (wet=wet, text=output))
         catch e
             @warn "LLM request failed" uri=MonsieurPapin.uri(wet) e
