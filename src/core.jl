@@ -79,23 +79,6 @@ function harvest(settings, entries::Channel{<:WET}, source::TokenWeights; capaci
     shortlist
 end
 
-"""
-    semantic(settings, entries) -> WETQueue
-
-Stage 2: Semantic scoring via embeddings.
-Consumes from harvest and maintains a prioritized queue of the most relevant items.
-"""
-function semantic(settings, entries::Channel{<:WET})
-    shortlist = WETQueue(settings["pipeline"]["capacity"], eltype(entries))
-    emb = embedding(join(settings["pipeline"]["keywords"], " "); vecpath=settings["embedding"]["model"])
-    
-    filtered = relevant!(emb, entries; capacity=Threads.nthreads()*10, threshold=1.0-settings["pipeline"]["threshold"])
-    for wet in filtered
-        insert!(shortlist, wet)
-    end
-    shortlist
-end
-
 function semantic(settings, entries::WETQueue, text::AbstractString; capacity=10)
     shortlist = WETQueue(capacity, eltype(entries))
     isempty(entries) && return shortlist
@@ -120,28 +103,49 @@ wetstream(settings) = wets(settings["crawl"]["path"]; capacity=settings["pipelin
 function research(settings)
     raw_wets = wetstream(settings)
     candidates = harvest(settings["pipeline"]["keywords"], settings, raw_wets)
-    
+
     Threads.@spawn begin
-        open(settings["output"]["path"], "a") do file
-            shortlist = semantic(settings, candidates)
-            
-            @info "Crawl exhausted. Extracting top results..." count=length(shortlist)
-            
-            while !isempty(shortlist)
-                best_wet = best!(shortlist)
-                @info "Analyzing high-relevance page" uri=uri(best_wet) score=best_wet.score
-                response = request(;
-                    model=settings["llm"]["model"],
-                    systemprompt=settings["prompts"]["system"],
-                    input=string(settings["prompts"]["input"], "\n\n", prompt(best_wet)),
-                    baseurl=settings["llm"]["baseurl"],
-                    path=settings["llm"]["path"],
-                    password=settings["llm"]["password"],
-                    timeout=settings["llm"]["timeout"],
-                )
-                append!(file, get_message(response))
+        T = eltype(candidates)
+        shortlist = WETQueue(settings["pipeline"]["capacity"], T)
+        emb = embedding(join(settings["pipeline"]["keywords"], " "); vecpath=settings["embedding"]["model"])
+
+        requests = Channel{Union{Nothing, T}}(Threads.nthreads())
+        responses = Channel{NamedTuple{(:wet, :text), Tuple{T, String}}}(Threads.nthreads())
+        submitted, completed = Threads.Atomic{Int}(0), Threads.Atomic{Int}(0)
+
+        consumer = Threads.@spawn for wet in requests
+            wet === nothing && break
+            try
+                response = request(; model=settings["llm"]["model"], systemprompt=settings["prompts"]["system"],
+                    input=string(settings["prompts"]["input"], "\n\n", prompt(wet)),
+                    baseurl=settings["llm"]["baseurl"], path=settings["llm"]["path"],
+                    password=settings["llm"]["password"], timeout=settings["llm"]["timeout"])
+                put!(responses, (wet=wet, text=get_message(response)))
+            catch e
+                @warn "LLM request failed" uri=uri(wet) e
+                put!(responses, (wet=wet, text=""))
             end
         end
+
+        open(settings["output"]["path"], "a") do file
+            for wet in relevant!(emb, candidates; capacity=Threads.nthreads()*10, threshold=1.0-settings["pipeline"]["threshold"])
+                insert!(shortlist, wet)
+                while !isempty(shortlist) && !isfull(requests)
+                    put!(requests, best!(shortlist)); submitted[] += 1
+                end
+                while isready(responses)
+                    result = take!(responses); completed[] += 1; append!(file, result.text)
+                end
+            end
+            @info "Crawl exhausted. Extracting top results..." remaining=length(shortlist)
+            while !isempty(shortlist) && !isfull(requests)
+                put!(requests, best!(shortlist)); submitted[] += 1
+            end
+            while completed[] < submitted[]
+                result = take!(responses); completed[] += 1; append!(file, result.text)
+            end
+        end
+        put!(requests, nothing); wait(consumer)
         @info "Research complete."
     end
 end
