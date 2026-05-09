@@ -76,7 +76,7 @@ function bootstrap(config::Configuration, urls::Vector{<:AbstractString}, task::
         password=config.password,
         timeout=config.timeoutseconds,
     )
-    response_text = extract_content(response)
+    response_text = get_message(response)
     
     try
         clean_json = stripjson(response_text)
@@ -220,7 +220,7 @@ function research(config::Configuration)
                     password=config.password,
                     timeout=config.timeoutseconds,
                 )
-                output = extract_content(response)
+                output = get_message(response)
                 append!(file, output)
             end
         end
@@ -251,7 +251,7 @@ function research(config::Configuration, urls::Vector{<:AbstractString}, wetpath
                     password=report.password,
                     timeout=report.timeoutseconds,
                 )
-                append!(file, extract_content(response))
+                append!(file, get_message(response))
             end
         end
 

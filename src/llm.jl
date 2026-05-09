@@ -14,46 +14,15 @@ end
 
 
 
-# Deeply extract content from various response structures
-function extract_content(data)
-    # 1. If it's a message array, look for the first message type
-    if data isa AbstractVector
-        for item in data
-            res = extract_content(item)
-            !isempty(res) && return res
-        end
-    # 2. If it's a dict, look for content, text, or message fields
-    elseif data isa AbstractDict
-        if get(data, "type", "") == "message"
-            return get(data, "content", "")
-        elseif haskey(data, "content")
-            return extract_content(data["content"])
-        elseif haskey(data, "output")
-            return extract_content(data["output"])
-        elseif haskey(data, "text")
-            return extract_content(data["text"])
-        elseif haskey(data, "choices")
-            return extract_content(data["choices"])
-        elseif haskey(data, "message")
-            return extract_content(data["message"])
-        end
-    # 3. If it's already a string, we are done
-    elseif data isa AbstractString
-        return data
+function get_message(data)
+    for entry in data["output"]
+        entry["type"] == "message" && return entry["content"]
     end
     return ""
 end
 
 function stripjson(text::AbstractString)
-    # Aggressively extract the largest valid-looking JSON object {...}
-    first_brace = findfirst('{', text)
-    last_brace = findlast('}', text)
-    
-    if !isnothing(first_brace) && !isnothing(last_brace)
-        return text[first_brace:last_brace]
-    end
-    
-    return text
+    return text[findfirst('{', text):findlast('}', text)]
 end
 
 
