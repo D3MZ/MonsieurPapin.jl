@@ -10,9 +10,9 @@ settings["crawl"]["path"] = "data/wet.paths.gz"
 
 # Generate keywords and summaries from seed URLs
 seedpages = [MonsieurPapin.fetchtext(url) for url in seed_urls]
-settings["pipeline"]["keywords"] = unique(reduce(vcat, [MonsieurPapin.keywords(settings, page) for page in seedpages]))
+keywords = unique(reduce(vcat, [MonsieurPapin.keywords(settings, page) for page in seedpages]))
 summaries = [MonsieurPapin.summary(settings, page) for page in seedpages]
-@info "Seed processing complete." keywords_count=length(settings["pipeline"]["keywords"]) summaries_count=length(summaries)
+@info "Seed processing complete." keywords_count=length(keywords) summaries_count=length(summaries)
 
 const NTHREADS   = Threads.nthreads()
 const TOTAL_URIS = 100_000
@@ -52,10 +52,10 @@ raw = Channel{wet_type}(NTHREADS * 100) do out
 end
 
 # ── stage 2: harvest (dedup + keyword) ─────────────────────────────
-candidates = harvest(settings, raw)
+candidates = harvest(keywords, settings, raw)
 
 # ── stage 3+4: semantic scoring + LLM waterfall ────────────────────
-emb       = embedding(join(settings["pipeline"]["keywords"], " "); vecpath=settings["embedding"]["model"])
+emb       = embedding(join(keywords, " "); vecpath=settings["embedding"]["model"])
 shortlist = WETQueue(settings["pipeline"]["capacity"], wet_type)
 
 requests  = Channel{Union{Nothing, wet_type}}(NTHREADS)
