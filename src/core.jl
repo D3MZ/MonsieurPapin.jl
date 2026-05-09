@@ -1,24 +1,4 @@
-Base.@kwdef mutable struct Configuration
-    crawlpath = URI("https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-08/wet.paths.gz")
-    crawlroot::String = "https://data.commoncrawl.org/"
-    capacity::Int = Threads.nthreads() * 10
-    threshold::Float64 = 0.6
-    vecpath::String = "minishlab/potion-multilingual-128M"
-    query::String = ""
-    keywords::Vector{String} = String[]
-    languages::Vector{String} = ["eng", "deu", "rus", "jpn", "zho", "spa", "fra", "por", "ita", "pol"]
-    dedupe_capacity::Int = 100_000
-    baseurl::String = "http://localhost:1234"
-    path::String = "/api/v1/chat"
-    model::String = "qwen/qwen3.6-27b"
-    password::String = ""
-    outputpath::String = "research.md"
-    timeoutseconds::Int = 120
-    systemprompt::String = "You extract trading strategies from web pages. Output ONLY valid JSON."
-    inputtemplate::String = """Output JSON: {"skip": true} if no concrete trading strategy exists. Otherwise: {"skip": false, "source": "<URI>", "name": "<strategy name>", "description": "<2-3 sentences>", "code": "<pseudo-code>"}"""
-    localsystemprompt::String = "You extract only trading strategies and financial or technical indicators. If the page does not contain a trading strategy or financial or technical indicator, return an empty string and no explanation. If it does, write 1-2 sentences with the source URL and a small pseudo Julia code block."
-    localinput::String = "Review this page excerpt and follow the output rule."
-end
+loadsettings(path="settings.toml") = TOML.parsefile(path)
 
 struct TokenWeights
     weights::Dict{String,Float64}
@@ -53,7 +33,7 @@ function weights(page::AbstractString; capacity=128)
     TokenWeights(Dict(first(entry) => 1 / sqrt(last(entry)) for entry in limited))
 end
 
-function bootstrap(config::Configuration, urls::Vector{<:AbstractString}, task::AbstractString)
+function bootstrap(settings, urls::Vector{<:AbstractString}, task::AbstractString)
     @info "Bootstrapping crawl from seed URLs..." urls
     seeds_text = join([fetchseed(url) for url in urls], "\n\n")
     
@@ -72,58 +52,44 @@ function bootstrap(config::Configuration, urls::Vector{<:AbstractString}, task::
     """
     
     response = request(;
-        model=config.model,
+        model=settings["llm"]["model"],
         systemprompt="You are a technical analyst assistant. Output ONLY JSON.",
         input=analysis_prompt,
-        baseurl=config.baseurl,
-        path=config.path,
-        password=config.password,
-        timeout=config.timeoutseconds,
+        baseurl=settings["llm"]["baseurl"],
+        path=settings["llm"]["path"],
+        password=settings["llm"]["password"],
+        timeout=settings["llm"]["timeout"],
     )
     response_text = get_message(response)
     
-    try
-        data = JSON.parse(response_text)
-        config.keywords = convert(Vector{String}, data["keywords"])
-        config.query = convert(String, data["query"])
-        @info "Bootstrap complete." query=config.query keywords_count=length(config.keywords)
-    catch e
-        @error "Failed to parse bootstrap analysis: $e"
-        @info "Raw response: $response_text"
-    end
-    
-    config
+    data = JSON.parse(response_text)
+    settings["pipeline"]["keywords"] = convert(Vector{String}, data["keywords"])
+    settings["pipeline"]["query"] = convert(String, data["query"])
+    @info "Bootstrap complete." query=settings["pipeline"]["query"] keywords_count=length(settings["pipeline"]["keywords"])
 end
-
-weturis(config::Configuration) = wetURIs(config.crawlpath; capacity=config.capacity)
-wets(config::Configuration) = wets(weturis(config); capacity=config.capacity, wetroot=config.crawlroot, languages=config.languages)
 
 # --- Pipeline Stages ---
 
 """
-    harvest(config, entries) -> Channel{WET}
+    harvest(settings, entries) -> Channel{WET}
 
 Stage 1: High-speed deduplication and keyword matching.
 Filters the raw stream down to candidates that contain target keywords.
 """
-function harvest(config::Configuration, entries::Channel{<:WET})
-    out = Channel{eltype(entries)}(config.capacity)
-    deduper = Deduper(config.dedupe_capacity)
-    ac = isempty(config.keywords) ? nothing : AC(config.keywords)
+function harvest(settings, entries::Channel{<:WET})
+    out = Channel{eltype(entries)}(settings["pipeline"]["capacity"])
+    deduper = Deduper(settings["pipeline"]["dedupe_capacity"])
+    keywords = settings["pipeline"]["keywords"]
+    ac = isempty(keywords) ? nothing : AC(keywords)
     
     Threads.@spawn begin
         try
             for wet in entries
-                # 1. Dedupe
                 isduplicate(deduper, wet) && continue
                 
-                # 2. Keyword score
                 if !isnothing(ac)
-                    # We store the match count in the score field for now
-                    # A non-zero count is our filter
                     s = RustWorker.score(ac, wet)
                     s > 0 || continue
-                    # Update wet with preliminary score
                     wet = update(Float64(s), wet)
                 end
                 
@@ -137,10 +103,10 @@ function harvest(config::Configuration, entries::Channel{<:WET})
     out
 end
 
-function harvest(config::Configuration, entries::Channel{<:WET}, source::TokenWeights; capacity=10)
+function harvest(settings, entries::Channel{<:WET}, source::TokenWeights; capacity=10)
     shortlist = WETQueue(capacity, eltype(entries), ReverseOrdering(By(score)))
     isempty(source.weights) && return shortlist
-    deduper = Deduper(config.dedupe_capacity)
+    deduper = Deduper(settings["pipeline"]["dedupe_capacity"])
     ac = AC(source.weights)
 
     try
@@ -158,27 +124,26 @@ function harvest(config::Configuration, entries::Channel{<:WET}, source::TokenWe
 end
 
 """
-    semantic(config, entries) -> WETQueue
+    semantic(settings, entries) -> WETQueue
 
 Stage 2: Semantic scoring via embeddings.
 Consumes from harvest and maintains a prioritized queue of the most relevant items.
 """
-function semantic(config::Configuration, entries::Channel{<:WET})
-    shortlist = WETQueue(config.capacity, eltype(entries))
-    emb = embedding(config.query; vecpath=config.vecpath)
+function semantic(settings, entries::Channel{<:WET})
+    shortlist = WETQueue(settings["pipeline"]["capacity"], eltype(entries))
+    emb = embedding(settings["pipeline"]["query"]; vecpath=settings["embedding"]["model"])
     
-    # Parallel scoring via relevant!
-    filtered = relevant!(emb, entries; capacity=Threads.nthreads()*10, threshold=1.0-config.threshold)
+    filtered = relevant!(emb, entries; capacity=Threads.nthreads()*10, threshold=1.0-settings["pipeline"]["threshold"])
     for wet in filtered
         insert!(shortlist, wet)
     end
     shortlist
 end
 
-function semantic(config::Configuration, entries::WETQueue, text::AbstractString; capacity=10)
+function semantic(settings, entries::WETQueue, text::AbstractString; capacity=10)
     shortlist = WETQueue(capacity, eltype(entries))
     isempty(entries) && return shortlist
-    source = embedding(query(text); vecpath=config.vecpath)
+    source = embedding(query(text); vecpath=settings["embedding"]["model"])
 
     while !isempty(entries)
         insert!(shortlist, score(source, best!(entries)))
@@ -191,23 +156,18 @@ end
 
 append!(file, output::AbstractString) = isempty(output) ? file : (write(file, strip(output), "\n"); flush(file); file)
 
-prompt(wet::WET, config::Configuration) = string("URI: ", uri(wet), "\nLANGUAGE: ", language(wet), "\nSCORE: ", wet.score, "\n\n", content(wet))
+prompt(wet::WET) = string("URI: ", uri(wet), "\nLANGUAGE: ", language(wet), "\nSCORE: ", wet.score, "\n\n", content(wet))
 prompt(wet::WET, ::Val{:local}) = string("SOURCE URL: ", uri(wet), "\nLANGUAGE: ", language(wet), "\nDISTANCE: ", wet.score, "\n\nPAGE EXCERPT:\n", content(wet))
 
-function research(config::Configuration)
-    raw_wets = wets(config)
-    candidates = harvest(config, raw_wets)
+wetstream(settings) = wets(settings["crawl"]["path"]; capacity=settings["pipeline"]["capacity"], wetroot=settings["crawl"]["root"], languages=settings["crawl"]["languages"])
+
+function research(settings)
+    raw_wets = wetstream(settings)
+    candidates = harvest(settings, raw_wets)
     
-    # We use a separate task for extraction so it can run while semantic stage buffers
     Threads.@spawn begin
-        open(config.outputpath, "a") do file
-            # In this refactored version, we process the stream in semantic stage
-            # which returns a prioritized queue once the stream is exhausted.
-            # However, for continuous extraction, we might want to pop from queue
-            # as soon as it's "good enough".
-            
-            # For simplicity in this first staged version, we process the full stream:
-            shortlist = semantic(config, candidates)
+        open(settings["output"]["path"], "a") do file
+            shortlist = semantic(settings, candidates)
             
             @info "Crawl exhausted. Extracting top results..." count=length(shortlist)
             
@@ -215,49 +175,47 @@ function research(config::Configuration)
                 best_wet = best!(shortlist)
                 @info "Analyzing high-relevance page" uri=uri(best_wet) score=best_wet.score
                 response = request(;
-                    model=config.model,
-                    systemprompt=config.systemprompt,
-                    input=string(config.inputtemplate, "\n\n", prompt(best_wet, config)),
-                    baseurl=config.baseurl,
-                    path=config.path,
-                    password=config.password,
-                    timeout=config.timeoutseconds,
+                    model=settings["llm"]["model"],
+                    systemprompt=settings["prompts"]["system"],
+                    input=string(settings["prompts"]["input"], "\n\n", prompt(best_wet)),
+                    baseurl=settings["llm"]["baseurl"],
+                    path=settings["llm"]["path"],
+                    password=settings["llm"]["password"],
+                    timeout=settings["llm"]["timeout"],
                 )
-                output = get_message(response)
-                append!(file, output)
+                append!(file, get_message(response))
             end
         end
         @info "Research complete."
     end
 end
 
-function research(config::Configuration, urls::Vector{<:AbstractString}, wetpath::AbstractString)
+function research(settings, urls::Vector{<:AbstractString}, wetpath::AbstractString)
     Threads.@spawn begin
         source = seed(urls)
-        candidates = harvest(config, wets(wetpath; capacity=config.capacity, languages=config.languages), weights(source))
+        candidates = harvest(settings, wets(wetpath; capacity=settings["pipeline"]["capacity"], languages=settings["crawl"]["languages"]), weights(source))
         retained = length(candidates)
-        shortlist = semantic(config, candidates, source)
-        report = deepcopy(config)
+        shortlist = semantic(settings, candidates, source)
         entries = length(shortlist)
 
-        open(config.outputpath, "w") do file
-            @info "Local research shortlist ready." candidates=retained entries=entries outputpath=config.outputpath
+        open(settings["output"]["path"], "w") do file
+            @info "Local research shortlist ready." candidates=retained entries=entries outputpath=settings["output"]["path"]
             while !isempty(shortlist)
                 wet = best!(shortlist)
                 @info "Analyzing local page" uri=uri(wet) score=wet.score
                 response = request(;
-                    model=report.model,
-                    systemprompt=report.localsystemprompt,
-                    input=string(report.localinput, "\n\n", prompt(wet, Val(:local))),
-                    baseurl=report.baseurl,
-                    path=report.path,
-                    password=report.password,
-                    timeout=report.timeoutseconds,
+                    model=settings["llm"]["model"],
+                    systemprompt=settings["prompts"]["local_system"],
+                    input=string(settings["prompts"]["local_input"], "\n\n", prompt(wet, Val(:local))),
+                    baseurl=settings["llm"]["baseurl"],
+                    path=settings["llm"]["path"],
+                    password=settings["llm"]["password"],
+                    timeout=settings["llm"]["timeout"],
                 )
                 append!(file, get_message(response))
             end
         end
 
-        @info "Local research complete." outputpath=config.outputpath entries=entries
+        @info "Local research complete." outputpath=settings["output"]["path"] entries=entries
     end
 end

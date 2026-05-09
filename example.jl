@@ -1,27 +1,25 @@
 #!/usr/bin/env julia
 # example.jl — Waterfall pipeline: each stage streams into the next
 using MonsieurPapin, ProgressMeter
-using HTTP: URI
 
-config = Configuration(
-    crawlpath  = "data/wet.paths.gz",
-    capacity   = 2000,
-    threshold  = 0.6,
-    model      = "qwen/qwen3.6-27b",
-    outputpath = "research.md",
-)
+settings = loadsettings()
+settings["pipeline"]["capacity"] = 2000
+
+# Override crawl path for local testing
+settings["crawl"]["path"] = "data/wet.paths.gz"
 
 # Boostrap: fetch seed URLs, let LLM generate keywords + semantic query
 seed_urls = [
     "https://en.wikipedia.org/wiki/Technical_analysis",
     "https://en.wikipedia.org/wiki/Algorithmic_trading",
 ]
-bootstrap(config, seed_urls, "Find trading strategies that can be expressed as pseudo-code with clear entry/exit rules")
+bootstrap(settings, seed_urls, "Find trading strategies that can be expressed as pseudo-code with clear entry/exit rules")
 
 # Fallback if bootstrap fails
-if isempty(config.query)
-    config.query = "trading strategy entry exit rules indicators pseudo-code"
-    @warn "Bootstrap failed, using fallback query" config.query
+query = settings["pipeline"]["query"]
+if isempty(query)
+    settings["pipeline"]["query"] = "trading strategy entry exit rules indicators pseudo-code"
+    @warn "Bootstrap failed, using fallback query" settings["pipeline"]["query"]
 end
 
 const NTHREADS   = Threads.nthreads()
@@ -31,7 +29,7 @@ wet_type = WET{4096, 12000, 64}
 
 # ── stage 1: parallel WET download → raw channel ───────────────────
 uris = Channel{String}(NTHREADS * 10) do ch
-    for uri in wetURIs(config.crawlpath; capacity=NTHREADS)
+    for uri in wetURIs(settings["crawl"]["path"]; capacity=NTHREADS)
         put!(ch, String(uri))
     end
 end
@@ -39,13 +37,13 @@ end
 p       = Progress(TOTAL_URIS; desc="WET URIs: ", output=stderr)
 lk      = ReentrantLock()
 counter = Threads.Atomic{Int}(0)
-deduper = Deduper(config.dedupe_capacity)
+deduper = Deduper(settings["pipeline"]["dedupe_capacity"])
 
 raw = Channel{wet_type}(NTHREADS * 100) do out
     tasks = [Threads.@spawn begin
         for path in uris
             try
-                for wet in wets(path; capacity=NTHREADS, wetroot=config.crawlroot)
+                for wet in wets(path; capacity=NTHREADS, wetroot=settings["crawl"]["root"])
                     isduplicate(deduper, wet) && continue
                     put!(out, wet)
                 end
@@ -62,11 +60,11 @@ raw = Channel{wet_type}(NTHREADS * 100) do out
 end
 
 # ── stage 2: harvest (dedup + keyword) ─────────────────────────────
-candidates = harvest(config, raw)
+candidates = harvest(settings, raw)
 
 # ── stage 3+4: semantic scoring + LLM waterfall ────────────────────
-emb       = embedding(config.query; vecpath=config.vecpath)
-shortlist = WETQueue(config.capacity, wet_type)
+emb       = embedding(settings["pipeline"]["query"]; vecpath=settings["embedding"]["model"])
+shortlist = WETQueue(settings["pipeline"]["capacity"], wet_type)
 
 requests  = Channel{Union{Nothing, wet_type}}(NTHREADS)
 responses = Channel{NamedTuple{(:wet, :text), Tuple{wet_type, String}}}(NTHREADS)
@@ -79,13 +77,13 @@ consumer = Threads.@spawn begin
         wet === nothing && break
         try
             response = MonsieurPapin.request(;
-                model=config.model,
-                systemprompt=config.systemprompt,
-                input=string(config.inputtemplate, "\n\n", MonsieurPapin.prompt(wet, config)),
-                baseurl=config.baseurl,
-                path=config.path,
-                password=config.password,
-                timeout=config.timeoutseconds,
+                model=settings["llm"]["model"],
+                systemprompt=settings["prompts"]["system"],
+                input=string(settings["prompts"]["input"], "\n\n", MonsieurPapin.prompt(wet)),
+                baseurl=settings["llm"]["baseurl"],
+                path=settings["llm"]["path"],
+                password=settings["llm"]["password"],
+                timeout=settings["llm"]["timeout"],
             )
             output = MonsieurPapin.get_message(response)
             put!(responses, (wet=wet, text=output))
@@ -96,8 +94,8 @@ consumer = Threads.@spawn begin
     end
 end
 
-open(config.outputpath, "w") do file
-    scored = relevant!(emb, candidates; capacity=NTHREADS*10, threshold=1.0-config.threshold)
+open(settings["output"]["path"], "w") do file
+    scored = relevant!(emb, candidates; capacity=NTHREADS*10, threshold=1.0-settings["pipeline"]["threshold"])
     first_result = Ref(true)
 
     for wet in scored
@@ -134,4 +132,4 @@ end
 
 put!(requests, nothing)  # signal consumer to stop
 wait(consumer)
-@info "Done" submitted=submitted[] completed=completed[] output=config.outputpath
+@info "Done" submitted=submitted[] completed=completed[] output=settings["output"]["path"]

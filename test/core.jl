@@ -1,6 +1,5 @@
 using CodecZlib
 using Test
-using HTTP: URI
 
 entryrecord(content; language="eng", uri="https://example.com") =
     "WARC/1.0\r\n" *
@@ -12,18 +11,13 @@ entryrecord(content; language="eng", uri="https://example.com") =
     content
 
 @testset "core" begin
-    config = Configuration()
-    remote = Configuration(; crawlpath=URI("https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-08/wet.paths.gz"))
-    localconfig = Configuration(; crawlpath="data/wet.paths.gz")
-    @test string(config.crawlpath) == "https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-08/wet.paths.gz"
-    @test remote.crawlpath == URI("https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-08/wet.paths.gz")
-    @test localconfig.crawlpath == "data/wet.paths.gz"
-    @test config.threshold == 0.6
-    @test config.vecpath == "minishlab/potion-multilingual-128M"
-    @test config.path == "/api/v1/chat"
-    @test config.outputpath == "research.md"
-    @test config.languages == ["eng", "deu", "rus", "jpn", "zho", "spa", "fra", "por", "ita", "pol"]
-    @test Configuration(; outputpath="notes.md", capacity=3).capacity == 3
+    settings = loadsettings()
+    @test settings["crawl"]["path"] == "https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-08/wet.paths.gz"
+    @test settings["pipeline"]["threshold"] == 0.6
+    @test settings["embedding"]["model"] == "minishlab/potion-multilingual-128M"
+    @test settings["llm"]["path"] == "/api/v1/chat"
+    @test settings["output"]["path"] == "research.md"
+    @test settings["crawl"]["languages"] == ["eng", "deu", "rus", "jpn", "zho", "spa", "fra", "por", "ita", "pol"]
 
     path = tempname() * ".gz"
     open(path, "w") do file
