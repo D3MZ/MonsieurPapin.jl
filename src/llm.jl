@@ -12,8 +12,5 @@ function request(; model::String, systemprompt::String, input::String,
     return JSON.parse(String(response.body))
 end
 
-
-
 get_message(data) = data["output"][1]["content"]
-
 
