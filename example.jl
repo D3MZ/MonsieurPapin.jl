@@ -18,6 +18,12 @@ seed_urls = [
 ]
 bootstrap(config, seed_urls, "Find trading strategies that can be expressed as pseudo-code with clear entry/exit rules")
 
+# Fallback if bootstrap fails
+if isempty(config.query)
+    config.query = "trading strategy entry exit rules indicators pseudo-code"
+    @warn "Bootstrap failed, using fallback query" config.query
+end
+
 const NTHREADS   = Threads.nthreads()
 const TOTAL_URIS = 100_000
 
