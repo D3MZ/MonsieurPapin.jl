@@ -1,5 +1,5 @@
 using Base.Order: By, ReverseOrdering, lt
-import DataStructures: heapify!
+using DataStructures: heapify!
 
 struct WETQueue{Value, Ranking<:Base.Ordering, HeapOrdering<:Base.Ordering}
     heap::BinaryHeap{Value, HeapOrdering}

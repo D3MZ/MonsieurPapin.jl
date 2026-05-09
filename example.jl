@@ -10,7 +10,7 @@ settings["crawl"]["path"] = "data/wet.paths.gz"
 
 # Generate keywords and summaries from seed URLs
 seedpages = [MonsieurPapin.fetchtext(url) for url in seed_urls]
-settings["pipeline"]["keywords"] = unique(vcat([MonsieurPapin.keywords(settings, page) for page in seedpages]...))
+settings["pipeline"]["keywords"] = unique(reduce(vcat, [MonsieurPapin.keywords(settings, page) for page in seedpages]))
 summaries = [MonsieurPapin.summary(settings, page) for page in seedpages]
 @info "Seed processing complete." keywords_count=length(settings["pipeline"]["keywords"]) summaries_count=length(summaries)
 

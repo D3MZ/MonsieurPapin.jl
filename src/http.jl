@@ -12,7 +12,7 @@ end
 
 collapse(page::AbstractString) = join(split(page), ' ')
 
-function gettext(page::AbstractString)::String
+function gettext(page::AbstractString)
     collapse(
         entities(
             drop(
@@ -29,7 +29,7 @@ function gettext(page::AbstractString)::String
     )
 end
 
-gettext(uri::URI)::String = gettext(String(HTTP.get(string(uri)).body))
+gettext(uri::URI) = gettext(String(HTTP.get(string(uri)).body))
 
 function fetchtext(url::AbstractString)
     response = HTTP.get(String(url); timeout=30)

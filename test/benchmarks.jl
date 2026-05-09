@@ -1,6 +1,6 @@
 # DO ADD OR REMOVE COMMENTS FROM THIS FILE
 using MonsieurPapin, BenchmarkTools, Statistics, Test
-import MonsieurPapin: insert!, score, content, gettext, distance, similarity, relevant!
+using MonsieurPapin: insert!, score, content, gettext, distance, similarity, relevant!
 
 # USE REAL DATASETS, NOT SIMULATED FOR BENCHMARKING.
 urispath = joinpath(dirname(@__DIR__), "data", "wet.paths.gz")
