@@ -6,7 +6,7 @@ using StringViews
 
 Generate a 64-bit SimHash fingerprint for the given byte array using 3-gram shingles.
 """
-function simhash(bytes::AbstractVector{UInt8})::UInt64
+function simhash(bytes::AbstractVector{UInt8})
     v = zeros(Int32, 64)
     n = length(bytes)
     n < 3 && return UInt64(0)
@@ -49,7 +49,7 @@ struct Deduper
     end
 end
 
-function seen!(deduper::Deduper, hash::UInt64)::Bool
+function seen!(deduper::Deduper, hash::UInt64)
     if hash in deduper.seen
         return true
     end

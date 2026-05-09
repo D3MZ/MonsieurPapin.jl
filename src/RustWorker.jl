@@ -66,11 +66,11 @@ function Base.close(entry::AC)
     entry
 end
 
-function score(entry::AC{UInt32}, pointer::Ptr{UInt8}, length::Integer)::UInt32
+function score(entry::AC{UInt32}, pointer::Ptr{UInt8}, length::Integer)
     call(:match_aho_corasick, entry.handle, UInt(pointer), UInt(length))
 end
 
-function score(entry::AC{Float64}, pointer::Ptr{UInt8}, length::Integer)::Float64
+function score(entry::AC{Float64}, pointer::Ptr{UInt8}, length::Integer)
     call(:match_weighted_aho_corasick, entry.handle, UInt(pointer), UInt(length))
 end
 

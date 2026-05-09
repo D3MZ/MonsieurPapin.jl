@@ -38,9 +38,9 @@ excerpt(text, language, score=0.0) = WET(
 entryrecord(content; language="eng", uri="https://example.com") =
     "WARC/1.0\r\n" *
     "WARC-Type: conversion\r\n" *
-    "WARC-Target-URI: $uri\r\n" *
+    "WARC-Target-URI: $(uri)\r\n" *
     "WARC-Date: 2026-03-03T00:00:00Z\r\n" *
-    "WARC-Identified-Content-Language: $language\r\n" *
+    "WARC-Identified-Content-Language: $(language)\r\n" *
     "Content-Length: $(ncodeunits(content))\r\n\r\n" *
     content
 

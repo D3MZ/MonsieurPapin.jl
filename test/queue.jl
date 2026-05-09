@@ -3,7 +3,7 @@ using Base.Order: By, ReverseOrdering
 using Dates
 using MonsieurPapin
 using Test
-import MonsieurPapin: insert!
+using MonsieurPapin: insert!
 
 queued(value) = WET(
     MonsieurPapin.Snippet{1}((0x61,), 1),
