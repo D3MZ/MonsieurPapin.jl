@@ -7,7 +7,6 @@
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://D3MZ.github.io/MonsieurPapin.jl/stable/)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://D3MZ.github.io/MonsieurPapin.jl/dev/)
 [![Build Status](https://github.com/D3MZ/MonsieurPapin.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/D3MZ/MonsieurPapin.jl/actions/workflows/CI.yml?query=branch%3Amain)
-[![Coverage](https://codecov.io/gh/D3MZ/MonsieurPapin.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/D3MZ/MonsieurPapin.jl)
 
 MonsieurPapin is an experimental Julia research pipeline for searching Common Crawl, ranking relevant pages through progressively more expensive stages, and writing LLM-extracted findings to `research.md`.
 
@@ -72,7 +71,7 @@ The script will:
 - Send shortlisted pages to the configured LLM
 - Append extracted findings to `research.md`
 
-### Configure the Run
+### Configure
 
 Edit the defaults near the top of `scripts/live_march.jl`:
 
@@ -85,13 +84,23 @@ keywordgate() = 10.0
 distancegate() = 0.45
 ```
 
-Configure the LLM endpoint in `src/core.jl`:
+Or customize via `config.toml` at the package root — all defaults live there:
 
-```julia
-baseurl::String = "http://localhost:1234"
-path::String = "/api/v1/chat"
-model::String = "qwen/qwen3.6-27b"
+```toml
+outputpath = "research.md"
+
+[crawl]
+crawlpath = "https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-08/wet.paths.gz"
+crawlroot = "https://data.commoncrawl.org/"
+languages = ["eng"]
+
+[llm]
+baseurl = "http://localhost:1234"
+path = "/api/v1/chat"
+model = "qwen/qwen3.6-27b"
 ```
+
+Prompt text lives in `prompts/` — edit `system.txt` and `input.txt` to change what the LLM extracts without touching code.
 
 For better local throughput, run Julia with more threads:
 
@@ -172,7 +181,9 @@ Important current gaps:
 
 | Path | Purpose |
 | --- | --- |
-| `src/core.jl` | Configuration, bootstrap, harvest, semantic orchestration |
+| `config.toml` | Default configuration (crawl, search, llm, prompt) |
+| `prompts/` | System prompt and LLM input template files |
+| `src/core.jl` | Settings struct, bootstrap, harvest, semantic orchestration |
 | `src/scoring.jl` | Relevance scoring helpers |
 | `src/queue.jl` | Fixed-capacity `WETQueue` |
 | `src/wets.jl` | WET record parsing |
