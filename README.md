@@ -74,6 +74,8 @@ The pipeline will:
 
 Edit `settings.toml` at the package root — all defaults live there including prompts, LLM connection, crawl source, and pipeline parameters.
 
+The LLM integration uses the OpenAI-compatible `/v1/chat/completions` endpoint and supports structured output via JSON schema (`response_format`). It works with LM Studio and any OpenAI-compatible server.
+
 For better local throughput, run Julia with more threads:
 
 ```bash

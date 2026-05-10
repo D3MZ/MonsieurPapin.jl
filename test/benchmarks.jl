@@ -213,12 +213,12 @@ end
 
     @testset "LLM prompt + request overhead" begin
         server = HTTP.serve!(ip"127.0.0.1", 0; verbose=false) do req::HTTP.Request
-            HTTP.Response(200, JSON.json(Dict("output" => [Dict("type" => "message", "content" => "strategy description")])))
+            HTTP.Response(200, JSON.json(Dict("choices" => [Dict("message" => Dict("content" => "strategy description"))])))
         end
         host, port = Sockets.getsockname(server.listener.server)
         baseurl = "http://$(host):$(port)"
         settings = Dict(
-            "llm" => Dict("baseurl" => baseurl, "path" => "/api/v1/chat", "model" => "qwen/qwen3.6-27b", "password" => "", "timeout" => 120),
+            "llm" => Dict("baseurl" => baseurl, "path" => "/v1/chat/completions", "model" => "qwen/qwen3.6-27b", "password" => "", "timeout" => 120),
         )
         page = "Relative strength index is a momentum trading indicator used to spot overbought and oversold conditions."
         try
