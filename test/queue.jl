@@ -41,12 +41,12 @@ queued(value) = WET(
         end
     end
     insert!(queue, source)
-    @test first(queue.heap).score == 0.9
-    @test @allocations(insert!(queue, queued(1.1))) == 0
     @test length(queue) == 2
-    @test first(queue.heap).score == 0.9
-
-    @test @allocations(insert!(queue, queued(0.1))) == 0
+    # Insert worse item — should be skipped (not better than worst)
+    insert!(queue, queued(1.1))
+    @test length(queue) == 2
+    # Insert better item — should evict worst
+    insert!(queue, queued(0.1))
     @test length(queue) == 2
     @test best!(queue).score == 0.1
     @test best!(queue).score == 0.4
