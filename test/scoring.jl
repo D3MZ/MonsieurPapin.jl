@@ -1,5 +1,6 @@
 using BenchmarkTools
 using CodecZlib
+using MonsieurPapin
 using Test
 
 record(content; language="eng", uri="https://example.com") =
