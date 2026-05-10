@@ -2,6 +2,7 @@ module MonsieurPapin
 
 using HTTP, CodecZlib, BufferedStreams, Dates, JSON, StringViews, TOML
 using DataStructures: BinaryHeap
+import DataStructures: heapify!
 using HTTP: URI
 export URI
 export WET, WETQueue, wetURIs, wets, loadsettings, Embedding, embedding, distance, score, request, fetchtext, gettext, language, languages, isrelevant, relevant!, best!, best, research, harvest, semantic, append!, prompt, AC, simhash, Deduper, isduplicate
