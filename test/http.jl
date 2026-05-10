@@ -1,5 +1,6 @@
 using Test
 using HTTP: URI
+using MonsieurPapin
 
 @testset "gettext" begin
     page = """
