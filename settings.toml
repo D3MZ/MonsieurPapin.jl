@@ -14,7 +14,7 @@ model = "minishlab/potion-multilingual-128M"
 
 [llm]
 baseurl = "http://localhost:1234"
-path = "/api/v1/chat"
+path = "/v1/chat/completions"
 model = "qwen/qwen3.6-27b"
 password = ""
 timeout = 120

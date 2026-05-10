@@ -2,6 +2,7 @@ using CodecZlib
 using Dates
 using HTTP
 using JSON
+using MonsieurPapin
 using Sockets
 using Test
 
@@ -21,7 +22,7 @@ testsettings(baseurl; languages=["eng"], outputpath="research.md") = Dict(
     "crawl" => Dict("languages" => languages),
     "pipeline" => Dict("capacity" => 100, "threshold" => 0.6, "dedupe_capacity" => 1000, "keywords" => String[]),
     "embedding" => Dict("model" => "minishlab/potion-multilingual-128M"),
-    "llm" => Dict("baseurl" => baseurl, "path" => "/api/v1/chat", "model" => "qwen/qwen3.6-27b", "password" => "", "timeout" => 120),
+    "llm" => Dict("baseurl" => baseurl, "path" => "/v1/chat/completions", "model" => "qwen/qwen3.6-27b", "password" => "", "timeout" => 120),
     "output" => Dict("path" => outputpath),
     "prompts" => Dict("system" => "", "input" => "", "local_system" => "", "local_input" => "", "keywords_system" => "Extract keywords from this text.", "summary_system" => "Summarize this text."),
 )
@@ -58,9 +59,10 @@ end
 
 @testset "llm" begin
     service = llmserver() do payload
-        input = payload["input"]
-        message = occursin("Common Crawl WET language code deu", input) ? "hallo" : "strategy"
-        Dict("output" => [Dict("type" => "message", "content" => message)])
+        messages = payload["messages"]
+        user_msg = messages[2]["content"]
+        message = occursin("Common Crawl WET language code deu", user_msg) ? "hallo" : "strategy"
+        Dict("choices" => [Dict("message" => Dict("content" => message))])
     end
 
     try
@@ -78,8 +80,9 @@ end
         )
         @test get_message(data) == "strategy"
         req = take!(service.requests)
-        @test req["input"] == string(inp, "\n\npage text")
-        @test req["system_prompt"] == sysprompt
+        @test req["messages"][2]["content"] == string(inp, "\n\npage text")
+        @test req["messages"][1]["role"] == "system"
+        @test req["messages"][1]["content"] == sysprompt
 
         data = request(;
             model=settings["llm"]["model"],
@@ -92,8 +95,8 @@ end
         )
         @test get_message(data) == "hallo"
         req = take!(service.requests)
-        @test req["input"] == "Translate the following text into the language identified by the Common Crawl WET language code deu. Output only the translated text.\n\nhello"
-        @test req["system_prompt"] == "You translate text accurately. Output only the translation."
+        @test req["messages"][2]["content"] == "Translate the following text into the language identified by the Common Crawl WET language code deu. Output only the translated text.\n\nhello"
+        @test req["messages"][1]["content"] == "You translate text accurately. Output only the translation."
 
         prompt = MonsieurPapin.prompt(excerpt("page text", "zho,eng", 0.2))
         @test occursin("LANGUAGE: zho,eng", prompt)
@@ -102,8 +105,8 @@ end
     end
 
     translated = llmserver(; seed="seed article") do payload
-        message = "[\"breakout\",\"trend\"]"
-        Dict("output" => [Dict("type" => "message", "content" => message)])
+        message = "{\"keywords\": [\"breakout\",\"trend\"]}"
+        Dict("choices" => [Dict("message" => Dict("content" => message))])
     end
 
     try
@@ -111,14 +114,16 @@ end
         result = keywords(settings, "seed article")
         @test result == ["breakout", "trend"]
         req = take!(translated.requests)
-        @test occursin("seed article", req["input"])
+        @test occursin("seed article", req["messages"][2]["content"])
+        @test !isnothing(req["response_format"])
+        @test req["response_format"]["json_schema"]["name"] == "keywords"
         @test !isready(translated.requests)
     finally
         close(translated.server)
     end
 
     unservice = llmserver(; seed="seed article") do payload
-        Dict("output" => [Dict("type" => "message", "content" => "a short summary")])
+        Dict("choices" => [Dict("message" => Dict("content" => "a short summary"))])
     end
 
     try
@@ -126,14 +131,14 @@ end
         result = MonsieurPapin.summary(settings, "seed article")
         @test result == "a short summary"
         req = take!(unservice.requests)
-        @test occursin("Summarize in at most 140 characters", req["input"])
+        @test occursin("Summarize in at most 140 characters", req["messages"][2]["content"])
         @test !isready(unservice.requests)
     finally
         close(unservice.server)
     end
 
     emptyservice = llmserver(; seed="<html><body>Relative strength index momentum oscillator trading indicator overbought oversold</body></html>") do payload
-        Dict("output" => [Dict("type" => "message", "content" => "")])
+        Dict("choices" => [Dict("message" => Dict("content" => ""))])
     end
 
     try
@@ -150,11 +155,11 @@ end
 
     if get(ENV, "MONSIEURPAPIN_MODEL2VEC", "false") == "true"
         researchservice = llmserver(; seed="<html><body>Relative strength index is a momentum trading indicator used to spot overbought and oversold conditions.</body></html>") do payload
-            input = payload["input"]
-            message = occursin("SOURCE URL: https://example.com/rsi", input) ?
+            user_msg = payload["messages"][2]["content"]
+            message = occursin("SOURCE URL: https://example.com/rsi", user_msg) ?
                 "Relative Strength Index measures momentum at https://example.com/rsi.\n```julia\nsignal(prices) = rsi(prices, 14) < 30 ? :buy : :hold\n```" :
                 ""
-            Dict("output" => [Dict("type" => "message", "content" => message)])
+            Dict("choices" => [Dict("message" => Dict("content" => message))])
         end
 
         try
@@ -171,7 +176,7 @@ end
             @test !isempty(report)
             @test occursin("https://example.com/rsi", report)
             @test occursin("```julia", report)
-            @test occursin("SOURCE URL: https://example.com/rsi", req["input"])
+            @test occursin("SOURCE URL: https://example.com/rsi", req["messages"][2]["content"])
         finally
             close(researchservice.server)
         end

@@ -24,7 +24,6 @@
 
 ## Robustness
 
-- [ ] Make bootstrap JSON extraction resilient to code fences and extra text.
 - [ ] Merge bootstrap keywords with seed-page term weights in `scripts/live_march.jl`.
 - [ ] Support multiple LLM consumers.
 - [ ] Retry seed page fetches with exponential backoff.
