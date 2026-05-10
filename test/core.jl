@@ -1,4 +1,5 @@
 using CodecZlib
+using MonsieurPapin
 using Test
 
 entryrecord(content; language="eng", uri="https://example.com") =
@@ -11,11 +12,11 @@ entryrecord(content; language="eng", uri="https://example.com") =
     content
 
 @testset "core" begin
-    settings = loadsettings()
+    settings = loadsettings(joinpath(dirname(@__DIR__), "settings.toml"))
     @test settings["crawl"]["path"] == "https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-08/wet.paths.gz"
     @test settings["pipeline"]["threshold"] == 0.6
     @test settings["embedding"]["model"] == "minishlab/potion-multilingual-128M"
-    @test settings["llm"]["path"] == "/api/v1/chat"
+    @test settings["llm"]["path"] == "/v1/chat/completions"
     @test settings["output"]["path"] == "research.md"
     @test settings["crawl"]["languages"] == ["eng", "deu", "rus", "jpn", "zho", "spa", "fra", "por", "ita", "pol"]
 
