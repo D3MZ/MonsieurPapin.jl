@@ -72,11 +72,11 @@ function isrelevant(string1::AbstractString, string2::AbstractString; threshold=
     similarity(string1, string2; vecpath) >= threshold
 end
 
-function RustWorker.score(entry::RustWorker.AC, wet::WET{U,C,L}) where {U,C,L}
+function score(entry::AC, wet::WET{U,C,L}) where {U,C,L}
     reference = Ref(wet)
     GC.@preserve reference begin
         ptr = Base.unsafe_convert(Ptr{WET{U,C,L}}, reference) + contentoffset(WET{U,C,L})
-        RustWorker.score(entry, Ptr{UInt8}(ptr), safe_length(Ptr{UInt8}(ptr), wet.content.length))
+        score(entry, Ptr{UInt8}(ptr), safe_length(Ptr{UInt8}(ptr), wet.content.length))
     end
 end
 

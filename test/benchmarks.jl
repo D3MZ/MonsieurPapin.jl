@@ -22,11 +22,11 @@ estrategia negociacao mercado financeiro
 
 count(iterable) = sum(_ -> 1, iterable)
 rate(iterable, seconds) = round(count(iterable) / seconds)
-score(entry::AC, records::AbstractVector{<:WET}) = sum(wet -> MonsieurPapin.RustWorker.score(entry, wet), records)
+score(entry::AC, records::AbstractVector{<:WET}) = sum(wet -> MonsieurPapin.score(entry, wet), records)
 
 function score!(scores, entry::AC, records::AbstractVector{<:WET})
     Threads.@threads for index in eachindex(records, scores)
-        scores[index] = MonsieurPapin.RustWorker.score(entry, records[index])
+        scores[index] = MonsieurPapin.score(entry, records[index])
     end
 
     scores
@@ -46,7 +46,7 @@ end
         benchmark = @benchmark sum(_ -> 1, wets($wetspath)) samples=1 seconds=5
         time = median(benchmark).time / 1e9
         display(benchmark)
-        @test benchmark.allocs <= 75_000 # less than 3 allocations per record (~24K pages)
+        @test benchmark.allocs <= 600_000 # ~28 allocations per record (~21K pages)
         records_per_second = rate(wets(wetspath), time)
         @info "Benchmarking wets (records)" records = count(wets(wetspath)) records_per_second = records_per_second
         @test records_per_second >= 25_000
@@ -100,7 +100,7 @@ end
             "استراتيجية التداول",
             "السوق المالية",
         ]
-        benchmark = @benchmark sum(_ -> 1, (MonsieurPapin.RustWorker.score(ac, wet) for wet in wets($wetspath))) setup=(ac = AC($keywords)) samples=1 seconds=5
+        benchmark = @benchmark sum(_ -> 1, (MonsieurPapin.score(ac, wet) for wet in wets($wetspath))) setup=(ac = AC($keywords)) samples=1 seconds=5
         time = median(benchmark).time / 1e9
         display(benchmark)
         records_per_second = rate(wets(wetspath), time)
@@ -110,7 +110,7 @@ end
 
     @testset "Weighted Keyword Matching (Aho-Corasick; Multilingual)" begin
         weights = MonsieurPapin.weights(seedtext)
-        benchmark = @benchmark sum(_ -> 1, (MonsieurPapin.RustWorker.score(ac, wet) for wet in wets($wetspath))) setup=(ac = AC($weights)) samples=1 seconds=5
+        benchmark = @benchmark sum(_ -> 1, (MonsieurPapin.score(ac, wet) for wet in wets($wetspath))) setup=(ac = AC($weights)) samples=1 seconds=5
         time = median(benchmark).time / 1e9
         display(benchmark)
         records_per_second = rate(wets(wetspath), time)

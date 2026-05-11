@@ -12,11 +12,12 @@ export get_message, keywords, summary
 include("wetURIs.jl")
 include("wets.jl")
 include("RustWorker.jl")
-using .RustWorker: AC
+include("ahocorasick.jl")
 include("scoring.jl")
 include("http.jl")
 include("simhash.jl")
 include("queue.jl")
+include("text.jl")
 include("core.jl")
 include("llm.jl")
 
