@@ -25,7 +25,7 @@ Measured on Apple M1 Max (64 GB) + Julia 1.12, single-threaded, on a 21,465-page
 | WET record parsing | 27,100 records/s | 21.5 hours for full crawl |
 | SimHash deduplication | 3,250 records/s | 7.5 days for full crawl |
 | Aho-Corasick keyword scoring | 22,100 records/s | Rust FFI |
-| Model2Vec embedding scoring | +400 records/s | Depends on GPU acceleration |
+| Model2Vec embedding scoring | +400 records/s | CPU-bound, serial per-record; batch scoring amortizes FFI overhead |
 | LLM extraction | ~0.6 ms (mock), ~0.1 pages/s (real) | Consumer-bound
 
 As a waterfall, each stage only processes the top candidates from the previous stage — the pipeline doesn't need to run every page through every stage. The practical throughput is bounded by embedding scoring (+34M pages/day) and LLM extraction, with the LLM being the bottleneck for deep extraction work.
