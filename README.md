@@ -11,7 +11,7 @@
 
 > A French Huguenot physicist, mathematician and inventor, best known for his pioneering invention of the steam digester, the forerunner of the pressure cooker, the steam engine, the centrifugal pump, and a submersible boat. — [Wikipedia](https://en.wikipedia.org/wiki/Denis_Papin)
 
-This ain't your ordinary digester: Search the entire internet, filter, extract, reduce, and summarize into a "research grade" markdown file on your computer in a day or your money back! :P
+This ain't your ordinary digester: Search the entire internet, filter, extract, reduce, and summarize into a "research grade" markdown file on your computer in a day or your money back :P
 
 > [!IMPORTANT]
 > MonsieurPapin is in active pre-release development. See [TODO](TODO.md) before running long crawls.
@@ -20,15 +20,15 @@ This ain't your ordinary digester: Search the entire internet, filter, extract, 
 
 Measured on Apple M1 Max (32 GB) + Julia 1.12, single-threaded, on a 21,465-page WET sample from the February 2026 Common Crawl archive (2.1 billion pages, 5.96 TiB compressed).
 
-| Stage | Rate | Bottleneck bound |
-| --- | --- | --- |
-| WET record parsing | 27,100 records/s | 21.5 hours for full crawl |
-| SimHash deduplication | 3,250 records/s | 7.5 days for full crawl |
-| Aho-Corasick keyword scoring | 22,100 records/s | Rust FFI |
-| Model2Vec embedding scoring | +400 records/s | CPU-bound, serial per-record; batch scoring amortizes FFI overhead |
-| Queue insert (top 1K) | 22,000 records/s | Bounded heap insert |
-| Queue best! extraction | 1,100,000 pops/s | Linear scan best-element removal |
-| LLM extraction | ~0.6 ms (mock), ~0.1 pages/s (real) | Consumer-bound
+| Stage | Rate |
+| --- | --- |
+| WET record parsing | 27,100 records/s |
+| SimHash deduplication | 3,250 records/s |
+| Aho-Corasick keyword scoring | 22,100 records/s |
+| Model2Vec embedding scoring | +400 records/s |
+| Queue insert (top 1K) | 22,000 records/s |
+| Queue best! extraction | 1,100,000 pops/s |
+| LLM extraction | ~0.6 ms (mock), ~0.1 pages/s (real) |
 
 As a waterfall, each stage only processes the top candidates from the previous stage — the pipeline doesn't need to run every page through every stage. The practical throughput is bounded by embedding scoring (+34M pages/day) and LLM extraction, with the LLM being the bottleneck for deep extraction work.
 
