@@ -12,7 +12,6 @@ scratch*
 scratch/
 tmp/
 *.vec
-research/
-wet.paths.gz
 research.md
+wet.paths.gz
 logo.png
