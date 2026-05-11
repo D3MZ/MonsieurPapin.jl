@@ -105,18 +105,6 @@ flowchart TD
 
 
 
-## Current Implementation
-
-The main runnable entry point is `example.jl`. It demonstrates the broader four-stage shape, including bootstrap and deduplication, with weighted Aho-Corasick terms, embedding scoring, a `WETQueue` shortlist, and LLM extraction.
-
-Important current gaps:
-
-- Keyword harvest is still a streaming threshold filter in the main path, not a fixed-capacity competing queue.
-- `semantic()` in `src/core.jl` drains its candidate channel before returning.
-- Bootstrap JSON parsing is fragile when the LLM wraps JSON in markdown or extra reasoning text.
-
-
-
 ## Models
 
 | Model | Type | Loading |
