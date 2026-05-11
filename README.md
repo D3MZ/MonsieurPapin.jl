@@ -101,13 +101,6 @@ flowchart TD
     G --> D
 ```
 
-| Stage | Purpose | Signal | Capacity |
-| --- | --- | --- | --- |
-| 1. Dedup | Prefer original content | SimHash uniqueness | 100K |
-| 2. Keyword | Strongest domain keyword matches | Aho-Corasick score | 100K |
-| 3. Embedding | Closest to the semantic query | Model2Vec cosine distance | 1K |
-| 4. LLM | Extract research findings | LLM relevance | Consumer-bound |
-
 **Key principles**: bounded queues evict lower-ranked candidates when full; expensive stages process the best survivors from the previous stage; near-duplicates compete rather than being hard-dropped.
 
 
