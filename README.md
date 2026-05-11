@@ -30,7 +30,7 @@ Measured on Apple M1 Max (32 GB) + Julia 1.12, single-threaded, on a 21,465-page
 | Queue best! extraction | 1,100,000 pops/s |
 | LLM extraction | ~0.6 ms (mock), ~0.1 pages/s (real) |
 
-As a waterfall, each stage only processes the top candidates from the previous stage — the pipeline doesn't need to run every page through every stage. The practical throughput is bounded by embedding scoring (+34M pages/day) and LLM extraction, with the LLM being the bottleneck for deep extraction work.
+As a waterfall, each stage only processes the top candidates from the previous stage — the pipeline doesn't need to run every page through every stage.
 
 See [test/benchmarks.jl](test/benchmarks.jl) for how to reproduce these numbers.
 
