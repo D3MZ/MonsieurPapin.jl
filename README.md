@@ -102,7 +102,3 @@ flowchart TD
 ```
 
 **Key principles**: bounded queues evict lower-ranked candidates when full; expensive stages process the best survivors from the previous stage; near-duplicates compete rather than being hard-dropped.
-
-
-
-## Models
