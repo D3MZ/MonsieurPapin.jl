@@ -18,7 +18,7 @@ This ain't your ordinary digester: Search the entire internet, filter, extract, 
 
 ## Performance Benchmarks
 
-Measured on Apple M1 Max (64 GB) + Julia 1.12, single-threaded, on a 21,465-page WET sample from the February 2026 Common Crawl archive (2.1 billion pages, 5.96 TiB compressed).
+Measured on Apple M1 Max (32 GB) + Julia 1.12, single-threaded, on a 21,465-page WET sample from the February 2026 Common Crawl archive (2.1 billion pages, 5.96 TiB compressed).
 
 | Stage | Rate | Bottleneck bound |
 | --- | --- | --- |
