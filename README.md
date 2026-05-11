@@ -106,35 +106,3 @@ flowchart TD
 
 
 ## Models
-
-| Model | Type | Loading |
-| --- | --- | --- |
-| `minishlab/potion-multilingual-128M` | Embedding | Downloaded by the Rust worker on first use |
-| Any OpenAI-compatible chat model | Extraction | Served separately at `baseurl` + `path` |
-
-## Project Layout
-
-| Path | Purpose |
-| `settings.toml` | All configuration (crawl, LLM, pipeline, prompts) |
-| `src/core.jl` | Pipeline orchestration (harvest, semantic, research) |
-| `src/llm.jl` | OpenAI-compatible API client (`request`, `keywords`, `summary`) |
-| `src/http.jl` | HTML→text extraction, HTTP fetch utilities |
-| `src/scoring.jl` | Embedding and distance helpers |
-| `src/queue.jl` | Fixed-capacity `WETQueue` priority heap |
-| `src/wets.jl` | WET record parsing and streaming |
-| `src/wetURIs.jl` | WET path list parsing (local or HTTP) |
-| `src/simhash.jl` | SimHash deduplication |
-| `src/RustWorker.jl` | Julia→Rust FFI for scoring |
-| `deps/model2vec_rs_worker/` | Rust Aho-Corasick + Model2Vec worker |
-| `example.jl` | Entry point — waterfall pipeline |
-| `test/` | Unit and integration tests |
-
-
-
-## Known Issues
-
-1. **Thread count defaults to 1** — Set `JULIA_NUM_THREADS=auto` before running long crawls.
-2. **`semantic()` blocks** — Drains its candidate channel before returning; `example.jl` works around this with direct waterfall dispatch.
-3. **Coarse keyword pass-through** — Too many keyword-passing pages reach the embedding stage before the bounded queue fills.
-4. **Settings mutation** — Pipeline code (e.g. bootstrap keyword generation) mutates the settings dict at runtime.
-
