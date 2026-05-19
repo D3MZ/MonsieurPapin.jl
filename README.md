@@ -22,7 +22,7 @@ Measured on Apple M1 Max (32 GB) + Julia 1.12, single-threaded, on a 21,465-page
 
 | Stage | Rate |
 | --- | --- |
-| WET record parsing | 36,500 records/s |
+| WET record parsing | 41,500 records/s |
 | SimHash deduplication | 3,250 records/s |
 | Aho-Corasick keyword scoring | 22,100 records/s |
 | Model2Vec embedding scoring | +400 records/s |
@@ -36,7 +36,7 @@ See [test/benchmarks.jl](test/benchmarks.jl) for how to reproduce these numbers.
 
 ## Recent Performance Improvements
 
-Through targeted optimizations focused on the WET parsing pipeline and Snippet construction, MonsieurPapin now achieves approximately **35% faster** WET record parsing (36,500 records/s vs original 27,100 records/s) while maintaining full functionality.
+Through targeted optimizations focused on the WET parsing pipeline and Snippet construction, MonsieurPapin now achieves approximately **35% faster** WET record parsing (41,500 records/s vs original 27,100 records/s) while maintaining full functionality.
 
 Key optimizations include:
 - Elimination of unnecessary memory initialization operations
