@@ -219,8 +219,8 @@ end
 
 function matches(bytes, start, stop, text::AbstractString)
     stop - start + 1 == ncodeunits(text) || return false
-    for (offset, byte) in enumerate(codeunits(text))
-        bytes[start + offset - 1] == byte || return false
+    for i in 0:(stop - start)
+        bytes[start + i] == codeunits(text)[i+1] || return false
     end
     true
 end
