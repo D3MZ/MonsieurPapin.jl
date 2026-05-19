@@ -213,8 +213,13 @@ end
 # --- Low-level Utilities ---
 
 function matches(bytes, start, prefix)
-    stop = start + length(prefix) - 1
-    stop <= lastindex(bytes) && @views(bytes[start:stop]) == prefix
+    prefix_len = length(prefix)
+    stop = start + prefix_len - 1
+    stop > lastindex(bytes) && return false
+    for i in 0:prefix_len-1
+        bytes[start + i] == prefix[i+1] || return false
+    end
+    return true
 end
 
 function matches(bytes, start, stop, text::AbstractString)
