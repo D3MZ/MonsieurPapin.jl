@@ -13,6 +13,7 @@ function Snippet(bytes::AbstractVector{UInt8}, start, stop, ::Val{N}) where {N}
 end
 
 Snippet(text::AbstractString, ::Val{N}) where {N} = (u = codeunits(text); Snippet(u, firstindex(u), lastindex(u), Val(N)))
+Snippet(::AbstractString, ::Val{N}) where {N} = Snippet{N}((ntuple(i -> zero(UInt8), Val{N})), 0)
 
 struct WET{U,C,L}
     uri::Snippet{U}
