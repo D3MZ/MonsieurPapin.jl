@@ -5,17 +5,18 @@ end
 
 function Snippet(bytes::AbstractVector{UInt8}, start, stop, ::Val{N}) where {N}
     len = min(N, max(stop - start + 1, 0))
-    len == 0 && return Snippet{N}((ntuple(i -> zero(UInt8), Val{N})), 0)
+    len == 0 && return Snippet{N}((ntuple(i -> zero(UInt8), N)), 0)
     
-    # Construct tuple directly to avoid Ref indirection
-    tuple = ntuple(i -> zero(UInt8), Val{N})
-    ptr = Base.unsafe_convert(Ptr{UInt8}, Ref(tuple))
+    # Use Ref approach but avoid unnecessary memset
+    tuple = Ref{NTuple{N,UInt8}}()
+    ptr = Base.unsafe_convert(Ptr{UInt8}, tuple)
+    # Skip memset since we'll overwrite the data anyway
     GC.@preserve bytes tuple unsafe_copyto!(ptr, pointer(bytes, start), len)
-    Snippet{N}(tuple, len)
+    Snippet{N}(tuple[], len)
 end
 
 Snippet(text::AbstractString, ::Val{N}) where {N} = (u = codeunits(text); Snippet(u, firstindex(u), lastindex(u), Val(N)))
-Snippet(::AbstractString, ::Val{N}) where {N} = Snippet{N}((ntuple(i -> zero(UInt8), Val{N})), 0)
+Snippet(::AbstractString, ::Val{N}) where {N} = Snippet{N}((ntuple(i -> zero(UInt8), N)), 0)
 
 struct WET{U,C,L}
     uri::Snippet{U}
