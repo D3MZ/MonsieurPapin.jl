@@ -6,37 +6,8 @@ using StringViews
 
 Generate a 64-bit SimHash fingerprint for the given byte array using 3-gram shingles.
 """
-function simhash(bytes::AbstractVector{UInt8})
-    v = zeros(Int32, 64)
-    n = length(bytes)
-    n < 3 && return UInt64(0)
-
-    # Pre-calculate hash constants
-    m1 = 0xff51afd7ed558ccd
-    m2 = 0xc4ceb9fe1a85ec53
-
-    @inbounds for i in 1:(n - 2)
-        h = (UInt64(bytes[i]) << 32) ⊻ (UInt64(bytes[i+1]) << 16) ⊻ UInt64(bytes[i+2])
-        h ⊻= UInt64(i)
-        
-        # Inlined hash64
-        h = (h ⊻ (h >> 33)) * m1
-        h = (h ⊻ (h >> 33)) * m2
-        h ⊻= (h >> 33)
-
-        for j in 1:64
-            v[j] += ((h >> (j-1)) & 1) == 1 ? 1 : -1
-        end
-    end
-
-    fingerprint = UInt64(0)
-    for j in 1:64
-        if v[j] > 0
-            fingerprint |= (UInt64(1) << (j-1))
-        end
-    end
-    return fingerprint
-end
+simhash(bytes::AbstractVector{UInt8}) =
+    GC.@preserve bytes simhash(pointer(bytes), length(bytes), Vector{Int32}(undef, 64))
 
 simhash(text::AbstractString) = simhash(codeunits(text))
 
@@ -78,8 +49,10 @@ function simhash(ptr::Ptr{UInt8}, n::Integer, v::AbstractVector{Int32})
         h = (h ⊻ (h >> 33)) * m2
         h ⊻= (h >> 33)
 
-        for j in 1:64
-            v[j] += ((h >> (j-1)) & 1) == 1 ? 1 : -1
+        # Branchless +1/-1 per bit: 2*bit - 1 maps bit 1 -> +1, bit 0 -> -1 (matches the
+        # original branch exactly, so fingerprints are unchanged).
+        @simd for j in 1:64
+            v[j] += Int32(2) * Int32((h >> (j - 1)) & UInt64(1)) - one(Int32)
         end
     end
 

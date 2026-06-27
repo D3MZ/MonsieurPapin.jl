@@ -23,7 +23,7 @@ Measured on Apple M1 Max (32 GB) + Julia 1.12, single-threaded, on a 21,465-page
 | Stage | Rate | Allocations |
 | --- | --- | --- |
 | WET record parsing | 23,500 records/s | 4/record (0 in steady state) |
-| SimHash deduplication | 3,100 records/s | 6/record |
+| SimHash deduplication | 7,300 records/s | 0/record (stage) |
 | Aho-Corasick keyword scoring | 19,000 records/s | 7/record |
 | Model2Vec embedding scoring | ~700 records/s | 7/record |
 | Queue insert (top 1K) | 23,000 records/s | 0/record (steady state) |
