@@ -23,8 +23,8 @@ Measured on Apple M1 Max (32 GB) + Julia 1.12, single-threaded, on a 21,465-page
 | Stage | Serial speed | Heap allocs | Big-O serial | Big-O parallel |
 | --- | --- | --- | --- | --- |
 | WET record parsing | 23,500 records/s | 0/record steady (4 setup) | O(N·L) | O(N·L / P) |
-| SimHash deduplication | 7,300 records/s | 0/record | O(N·L) | O(N·L / P) |
 | Aho-Corasick keyword scoring | 19,000 records/s | 7/record | O(N·L) | O(N·L / P) |
+| SimHash deduplication | 7,300 records/s | 0/record | O(N·L) | O(N·L / P) |
 | Model2Vec embedding scoring | ~700 records/s | 7/record | O(N·L) | O(N·L / P) |
 | Queue insert (top 1K) | 23,000 records/s | 0/record steady | O(N·log C) | O(N·log C) † |
 | Queue pop! extraction | 925,000 pops/s | 1/pop | O(C·log C) | O(C·log C) † |
@@ -32,7 +32,7 @@ Measured on Apple M1 Max (32 GB) + Julia 1.12, single-threaded, on a 21,465-page
 
 As a waterfall, each stage only processes the top candidates from the previous stage — the pipeline doesn't need to run every page through every stage.
 
-The four streaming stages are embarrassingly parallel per record (`O(N·L / P)`); `†` marks stages that stay serial — the queue mutates under a single lock and the LLM stage drains single-consumer (multiple consumers is a TODO), so it's the scoring that feeds them that parallelizes. The two front stages, where the full crawl flows, hit these parallel bounds in practice on 8 threads: dedup **7.2×** (9,900 → 71,900 records/s, near-linear since only the seen-set check is locked) and multi-file parsing **3.6×** (24,900 → 90,300 records/s, bounded by bandwidth as workers overlap per-file I/O and decompression).
+The four streaming stages are embarrassingly parallel per record (`O(N·L / P)`); `†` marks stages that stay serial — the queue mutates under a single lock and the LLM stage drains single-consumer (multiple consumers is a TODO), so it's the scoring that feeds them that parallelizes. These parallel bounds hold in practice on 8 threads: deduplication **7.2×** (9,900 → 71,900 records/s, near-linear since only the seen-set check is locked) and multi-file parsing **3.6×** (24,900 → 90,300 records/s, bounded by bandwidth as workers overlap per-file I/O and decompression).
 
 Allocation counts are what scale to a full crawl. Header parsing reads into a reused buffer rather than allocating per line, so steady-state record parsing is allocation-free; the small per-record figures above are amortized one-time stream setup. Every stage that consumes the WET stream inherits this, keeping heap pressure flat across billions of pages.
 
@@ -95,14 +95,14 @@ MonsieurPapin is a fixed-capacity waterfall. Each stage keeps the best candidate
 
 ```mermaid
 flowchart TD
-    A["Common Crawl WET archives (2.1B pages)"] --> B["Stage 1: deduplication"]
-    B --> C["Stage 2: keyword scoring"]
+    A["Common Crawl WET archives (2.1B pages)"] --> B["Stage 1: keyword scoring"]
+    B --> C["Stage 2: deduplication"]
     C --> D["Stage 3: embedding similarity"]
     D --> E["Stage 4: LLM extraction"]
     E --> F["research.md"]
 
-    G["Bootstrap from seed URLs"] --> C
+    G["Bootstrap from seed URLs"] --> B
     G --> D
 ```
 
-**Key principles**: bounded priority queues evict the lowest-ranked candidate when full; expensive stages process the best survivors from the previous stage; near-duplicates within a SimHash window are dropped before scoring.
+**Key principles**: bounded priority queues evict the lowest-ranked candidate when full; expensive stages process the best survivors from the previous stage; near-duplicates within a SimHash window are dropped from the keyword shortlist before the expensive embedding and extraction stages.

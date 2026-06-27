@@ -7,12 +7,13 @@ loadsettings(path="settings.toml") = TOML.parsefile(path)
 # and only the strongest survivors reach the expensive stages.
 
 """
-    unique(seen::SeenSet, source::Channel) -> Channel
+    unique(seen::SeenSet, source) -> Channel
 
-Deduplication. Streams `source`, dropping near-duplicates that fall inside `seen`'s SimHash
-window.
+Deduplication. Streams `source` (a `Channel` or any iterable stage, e.g. the keyword
+shortlist), dropping near-duplicates that fall inside `seen`'s SimHash window.
 """
-function Base.unique(seen::SeenSet, source::Channel{T}) where {T}
+function Base.unique(seen::SeenSet, source)
+    T = eltype(source)
     Channel{T}(Threads.nthreads() * 10; spawn=true) do novel
         # SimHash (CPU-bound) runs in parallel across workers; only the cheap seen-set check is
         # serialized under a lock. Each worker owns its scratch/accumulator. Which of two
@@ -111,18 +112,20 @@ prompt(wet::WET, ::Val{:local}) = string("SOURCE URL: ", uri(wet), "\nLANGUAGE: 
 
 wetstream(settings) = wets(settings["crawl"]["path"]; capacity=settings["pipeline"]["capacity"], wetroot=settings["crawl"]["root"], languages=settings["crawl"]["languages"])
 
-# The shared pipeline: dedup -> keyword -> embedding, all bounded priority queues. With no
-# keywords the keyword stage is skipped and pages flow straight into the embedding selection.
-pipeline(source, ac, query, capacity) =
-    select(query, isnothing(ac) ? source : select(ac, source; capacity); capacity)
+# The shared pipeline: keyword -> dedup -> embedding, all bounded priority queues. Keyword
+# scoring (the cheapest filter) runs first to shrink the stream, then near-duplicates are
+# dropped, then survivors are ranked by embedding similarity. With no keywords the keyword
+# stage is skipped and the full stream is deduplicated before the embedding selection.
+pipeline(source, seen, ac, query, capacity) =
+    select(query, unique(seen, isnothing(ac) ? source : select(ac, source; capacity)); capacity)
 
 function research(settings)
     keywords = settings["pipeline"]["keywords"]
     capacity = settings["pipeline"]["capacity"]
-    novel = unique(SeenSet(settings["pipeline"]["dedupe_capacity"]), wetstream(settings))
+    seen = SeenSet(settings["pipeline"]["dedupe_capacity"])
     matcher = isempty(keywords) ? nothing : AC(keywords)
     query = embedding(join(keywords, " "); vecpath=settings["embedding"]["model"])
-    best = pipeline(novel, matcher, query, capacity)
+    best = pipeline(wetstream(settings), seen, matcher, query, capacity)
     Threads.@spawn begin
         extract(best, settings, settings["prompts"]["system"], settings["prompts"]["input"], prompt)
         @info "Research complete." outputpath=settings["output"]["path"]
@@ -133,9 +136,10 @@ function research(settings, urls::Vector{<:AbstractString}, wetpath::AbstractStr
     Threads.@spawn begin
         article = seed(urls)
         capacity = settings["pipeline"]["capacity"]
-        novel = unique(SeenSet(settings["pipeline"]["dedupe_capacity"]), wets(wetpath; capacity, languages=settings["crawl"]["languages"]))
+        seen = SeenSet(settings["pipeline"]["dedupe_capacity"])
+        source = wets(wetpath; capacity, languages=settings["crawl"]["languages"])
         query = embedding(first(article, 2_000); vecpath=settings["embedding"]["model"])
-        best = pipeline(novel, AC(weights(article)), query, capacity)
+        best = pipeline(source, seen, AC(weights(article)), query, capacity)
         extract(best, settings, settings["prompts"]["local_system"], settings["prompts"]["local_input"], wet -> prompt(wet, Val(:local)); mode="w")
         @info "Local research complete." outputpath=settings["output"]["path"]
     end
