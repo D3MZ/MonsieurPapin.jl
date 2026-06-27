@@ -79,25 +79,29 @@ function isrelevant(string1::AbstractString, string2::AbstractString; threshold=
     similarity(string1, string2; vecpath) >= threshold
 end
 
-function score(entry::AC, wet::WET{U,C,L}) where {U,C,L}
-    reference = Ref(wet)
-    GC.@preserve reference begin
-        ptr = Base.unsafe_convert(Ptr{WET{U,C,L}}, reference) + contentoffset(WET{U,C,L})
-        score(entry, Ptr{UInt8}(ptr), utf8boundary(Ptr{UInt8}(ptr), wet.content.length))
+# `scratch` is a reusable box: writing the by-value WET into it lets us take a pointer to its
+# inline content without allocating a fresh box per call. The hot loop owns one scratch and
+# reuses it across every record; the convenience method allocates one per call.
+function score(entry::AC, wet::WET{U,C,L}, scratch::Base.RefValue{WET{U,C,L}}) where {U,C,L}
+    scratch[] = wet
+    GC.@preserve scratch begin
+        ptr = Ptr{UInt8}(Base.unsafe_convert(Ptr{WET{U,C,L}}, scratch) + contentoffset(WET{U,C,L}))
+        score(entry, ptr, utf8boundary(ptr, wet.content.length))
     end
 end
+score(entry::AC, wet::WET{U,C,L}) where {U,C,L} = score(entry, wet, Ref{WET{U,C,L}}())
 
 function score!(scores, pointers, lengths, source::Embedding, batch::AbstractVector{T}) where {T<:WET}
     resize!(scores, length(batch))
     resize!(pointers, length(batch))
     resize!(lengths, length(batch))
-    references = Ref.(batch)
 
-    GC.@preserve references pointers lengths scores begin
+    # WETs are isbits, so the batch stores them inline — point straight at each one, no per-element box.
+    GC.@preserve batch pointers lengths scores begin
         foreach(eachindex(batch)) do i
-            ptr = Base.unsafe_convert(Ptr{T}, references[i]) + contentoffset(T)
+            ptr = Ptr{UInt8}(pointer(batch, i) + contentoffset(T))
             pointers[i] = UInt(ptr)
-            lengths[i] = utf8boundary(Ptr{UInt8}(ptr), batch[i].content.length)
+            lengths[i] = utf8boundary(ptr, batch[i].content.length)
         end
 
         RustWorker.score!(scores, pointers, lengths, handle!(source))

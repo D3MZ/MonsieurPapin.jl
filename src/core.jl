@@ -14,8 +14,10 @@ window.
 """
 function Base.unique(seen::SeenSet, source::Channel{T}) where {T}
     Channel{T}(Threads.nthreads() * 10; spawn=true) do novel
+        scratch = Ref{T}()                   # reused box: hash each WET without allocating
+        counts = Vector{Int32}(undef, 64)    # reused SimHash accumulator
         for wet in source
-            seen!(seen, wet) || put!(novel, wet)
+            seen!(seen, wet, scratch, counts) || put!(novel, wet)
         end
     end
 end
@@ -29,9 +31,10 @@ at least one keyword, evicting the weakest as stronger pages arrive.
 function select(matcher::AC, source; capacity)
     shortlist = BoundedPriorityQueue{eltype(source)}(capacity, Reverse)
     Threads.@spawn begin
+        scratch = Ref{eltype(source)}()      # reused box: score each WET without allocating
         try
             for wet in source
-                value = score(matcher, wet)
+                value = score(matcher, wet, scratch)
                 value > 0 && put!(shortlist, rescore(wet, Float64(value)))
             end
         finally
