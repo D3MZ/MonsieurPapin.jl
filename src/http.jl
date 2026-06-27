@@ -1,6 +1,4 @@
-drop(page::AbstractString, pattern) = replace(page, pattern => " ")
-
-function entities(page::AbstractString)
+function decodeentities(page::AbstractString)
     replace(page,
         "&nbsp;" => " ", "&amp;" => "&", "&lt;" => "<",
         "&gt;" => ">", "&quot;" => "\"", "&#39;" => "'")
@@ -8,16 +6,16 @@ end
 
 collapse(page::AbstractString) = join(split(page), ' ')
 
-function gettext(page::AbstractString)
+function plaintext(page::AbstractString)
     page |>
-        p -> drop(p, r"<!--.*?-->"s) |>
-        p -> drop(p, r"<script\b[^>]*>.*?</script>"is) |>
-        p -> drop(p, r"<style\b[^>]*>.*?</style>"is) |>
-        p -> drop(p, r"<[^>]+>") |>
-        entities |>
+        p -> replace(p, r"<!--.*?-->"s => " ") |>
+        p -> replace(p, r"<script\b[^>]*>.*?</script>"is => " ") |>
+        p -> replace(p, r"<style\b[^>]*>.*?</style>"is => " ") |>
+        p -> replace(p, r"<[^>]+>" => " ") |>
+        decodeentities |>
         collapse
 end
 
-gettext(uri::URI) = gettext(String(HTTP.get(string(uri)).body))
+plaintext(uri::URI) = plaintext(String(HTTP.get(string(uri)).body))
 
-fetchtext(url::AbstractString) = gettext(String(HTTP.get(String(url); timeout=30).body))
+fetchtext(url::AbstractString) = plaintext(String(HTTP.get(String(url); timeout=30).body))

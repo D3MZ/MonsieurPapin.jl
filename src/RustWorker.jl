@@ -23,6 +23,11 @@ end
 
 function load()
     loaded[] && return nothing
+    # Julia owns thread-level parallelism: one model call per Julia worker, single-threaded
+    # inside Rust. Without this, tokenizers/Rayon spawn their own pools and oversubscribe
+    # (nthreads workers × Rayon = nthreads² OS threads contending).
+    ENV["RAYON_NUM_THREADS"] = "1"
+    ENV["TOKENIZERS_PARALLELISM"] = "false"
     Base.invokelatest(JlrsCore.Wrap.wrapmodule, build(), :model2vec_rs_worker_init_fn, @__MODULE__, @__FILE__, nothing)
     Base.invokelatest(JlrsCore.Wrap.initialize_julia_module, @__MODULE__)
     loaded[] = true

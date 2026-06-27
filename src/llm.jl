@@ -1,6 +1,6 @@
 function request(; model::String, systemprompt::String, input::String,
                   baseurl::String, path::String, password::String="",
-                  timeout::Int=120, response_format=nothing)
+                  timeout::Int=120, responseformat=nothing)
     body = Dict(
         "model" => model,
         "messages" => [
@@ -8,15 +8,15 @@ function request(; model::String, systemprompt::String, input::String,
             Dict("role" => "user", "content" => input),
         ],
     )
-    !isnothing(response_format) && (body["response_format"] = response_format)
+    !isnothing(responseformat) && (body["response_format"] = responseformat)
     headers = ["Content-Type" => "application/json", "Authorization" => "Bearer $(password)"]
     response = HTTP.post(string(baseurl, path); headers=headers, body=JSON.json(body), readtimeout=timeout)
     return JSON.parse(String(response.body))
 end
 
-get_message(data) = data["choices"][1]["message"]["content"]
+message(data) = data["choices"][1]["message"]["content"]
 
-function keywords(settings, text; limitinput=2000)
+function extractkeywords(settings, text; limitinput=2000)
     response = request(;
         model=settings["llm"]["model"],
         systemprompt=settings["prompts"]["keywords_system"],
@@ -25,7 +25,7 @@ function keywords(settings, text; limitinput=2000)
         path=settings["llm"]["path"],
         password=settings["llm"]["password"],
         timeout=settings["llm"]["timeout"],
-        response_format=Dict(
+        responseformat=Dict(
             "type" => "json_schema",
             "json_schema" => Dict(
                 "name" => "keywords",
@@ -43,10 +43,10 @@ function keywords(settings, text; limitinput=2000)
             ),
         ),
     )
-    return JSON.parse(get_message(response))["keywords"]
+    return JSON.parse(message(response))["keywords"]
 end
 
-function summary(settings, text; limit=140)
+function summarize(settings, text; limit=140)
     response = request(;
         model=settings["llm"]["model"],
         systemprompt=settings["prompts"]["summary_system"],
@@ -56,6 +56,6 @@ function summary(settings, text; limit=140)
         password=settings["llm"]["password"],
         timeout=settings["llm"]["timeout"],
     )
-    return get_message(response)
+    return message(response)
 end
 

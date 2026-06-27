@@ -1,6 +1,6 @@
 # DO ADD OR REMOVE COMMENTS FROM THIS FILE
 using MonsieurPapin, BenchmarkTools, Statistics, Test, HTTP, JSON, Sockets
-import MonsieurPapin: insert!, score, content, gettext, distance, similarity, relevant!
+import MonsieurPapin: insert!, score, content, plaintext, distance, similarity, select
 
 # USE REAL DATASETS, NOT SIMULATED FOR BENCHMARKING.
 urispath = joinpath(dirname(@__DIR__), "data", "wet.paths.gz")
@@ -33,13 +33,13 @@ function score!(scores, entry::AC, records::AbstractVector{<:WET})
 end
 
 @testset "benchmarks" begin
-    @testset "wetURIs" begin
-        benchmark = @benchmark sum(_ -> 1, wetURIs($urispath)) samples=1 seconds=5
+    @testset "wetpaths" begin
+        benchmark = @benchmark sum(_ -> 1, wetpaths($urispath)) samples=1 seconds=5
         time = median(benchmark).time / 1e9
         display(benchmark)
         @test benchmark.allocs <= 5 * 100_000 # less than 5 allocations per record (at 100K records)
-        uris_per_second = rate(wetURIs(urispath), time)
-        @info "Benchmarking wetURIs (paths)" uris = count(wetURIs(urispath)) uris_per_second = uris_per_second
+        uris_per_second = rate(wetpaths(urispath), time)
+        @info "Benchmarking wetpaths (paths)" uris = count(wetpaths(urispath)) uris_per_second = uris_per_second
     end
 
     @testset "wets" begin
@@ -135,7 +135,7 @@ end
     end
 
     @testset "Deduplication (SimHash; Single threaded)" begin
-        benchmark = @benchmark sum(_ -> 1, (isduplicate(deduper, wet) for wet in wets($wetspath))) setup=(deduper = Deduper(100_000)) samples=1 evals=1 seconds=5
+        benchmark = @benchmark sum(_ -> 1, (MonsieurPapin.seen!(seen, wet) for wet in wets($wetspath))) setup=(seen = SeenSet(100_000)) samples=1 evals=1 seconds=5
         time = median(benchmark).time / 1e9
         display(benchmark)
         records_per_second = rate(wets(wetspath), time)
@@ -176,38 +176,38 @@ end
         @test records_per_second >= 400
     end
 
-    @testset "relevant! filtering (channel-based, batch-parallel)" begin
+    @testset "select embedding filtering (channel-based, batch-parallel)" begin
         source = embedding("cat dog"; vecpath=model_source)
-        benchmark = @benchmark sum(_ -> 1, relevant!($source, wets($wetspath); threshold=-1.0)) samples=1 seconds=5
+        benchmark = @benchmark sum(_ -> 1, select($source, wets($wetspath); capacity=1_000)) samples=1 seconds=5
         time = median(benchmark).time / 1e9
         display(benchmark)
         records = count(wets(wetspath))
         records_per_second = round(records / time)
-        @info "Benchmarking relevant! (records)" records records_per_second allocations = benchmark.allocs
+        @info "Benchmarking select embedding (records)" records records_per_second allocations = benchmark.allocs
         @test records_per_second >= 400
         @test benchmark.allocs <= 10 * records
     end
 
     @testset "Queuing the top 1K" begin
-        benchmark = @benchmark insert!(queue, wets($wetspath)) setup=(queue = WETQueue(1_000, typeof(first(wets($wetspath))))) samples=1 seconds=5
+        benchmark = @benchmark insert!(shortlist, wets($wetspath)) setup=(shortlist = BoundedPriorityQueue{typeof(first(wets($wetspath)))}(1_000)) samples=1 seconds=5
         time = median(benchmark).time / 1e9
         display(benchmark)
-        queue = WETQueue(1_000, typeof(first(wets(wetspath))))
-        insert!(queue, wets(wetspath))
+        shortlist = BoundedPriorityQueue{typeof(first(wets(wetspath)))}(1_000)
+        insert!(shortlist, wets(wetspath))
         records_per_second = rate(wets(wetspath), time)
-        @info "Benchmarking queue (records)" records = count(wets(wetspath)) capacity = 1_000 retained = length(queue) records_per_second = records_per_second payload_mib = round(Base.summarysize(queue.heap) / 2.0^20; digits=4)
+        @info "Benchmarking queue (records)" records = count(wets(wetspath)) capacity = 1_000 retained = length(shortlist) records_per_second = records_per_second payload_mib = round(Base.summarysize(shortlist) / 2.0^20; digits=4)
         @test records_per_second >= 20_000
     end
 
-    @testset "Queue best! extraction from top 1K" begin
-        queue = WETQueue(1_000, typeof(first(wets(wetspath))))
-        insert!(queue, wets(wetspath))
-        retained = length(queue)
-        benchmark = @benchmark while !isempty($queue); best!($queue); end samples=1 seconds=5
+    @testset "BoundedPriorityQueue pop! extraction from top 1K" begin
+        shortlist = BoundedPriorityQueue{typeof(first(wets(wetspath)))}(1_000)
+        insert!(shortlist, wets(wetspath))
+        retained = length(shortlist)
+        benchmark = @benchmark while !isempty($shortlist); pop!($shortlist); end samples=1 seconds=5
         time = median(benchmark).time / 1e9
         display(benchmark)
         pops_per_second = round(retained / time)
-        @info "Benchmarking queue best! extraction" retained pops_per_second
+        @info "Benchmarking BoundedPriorityQueue pop! extraction" retained pops_per_second
         @test pops_per_second >= 1_000_000
     end
 

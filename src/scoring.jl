@@ -1,6 +1,18 @@
-struct Embedding
+mutable struct Embedding
     text::String
-    handle::RustWorker.Model
+    vecpath::String
+    handle::Union{Nothing,RustWorker.Model}
+    lock::ReentrantLock
+end
+
+# The model (and its query encoding) is loaded once, lazily, on first scoring — so a stage that
+# receives no candidates never touches the network. Double-checked locking keeps it thread-safe.
+function handle!(source::Embedding)
+    isnothing(source.handle) || return source.handle
+    lock(source.lock) do
+        isnothing(source.handle) && (source.handle = RustWorker.open(source.vecpath, source.text))
+        source.handle
+    end
 end
 
 function contentoffset(::Type{WET{U,C,L}}) where {U,C,L}
@@ -9,31 +21,26 @@ function contentoffset(::Type{WET{U,C,L}}) where {U,C,L}
     fieldoffset(WET{U,C,L}, 2) + fieldoffset(Snippet{C}, 1)
 end
 
-function safe_length(ptr::Ptr{UInt8}, len::Int)
+# Largest length <= len that ends on a UTF-8 character boundary, for a raw content pointer.
+function utf8boundary(ptr::Ptr{UInt8}, len::Integer)
     len <= 0 && return 0
-    last_start = len
-    while last_start > 0 && (unsafe_load(ptr, last_start) & 0xc0) == 0x80
-        last_start -= 1
+    start = len
+    while start > 0 && (unsafe_load(ptr, start) & 0xc0) == 0x80
+        start -= 1
     end
-    last_start == 0 && return len
-    b = unsafe_load(ptr, last_start)
-    (b & 0x80) == 0 && return len
-    needed = (b & 0xe0) == 0xc0 ? 2 :
-             (b & 0xf0) == 0xe0 ? 3 :
-             (b & 0xf8) == 0xf0 ? 4 : 1
-    len - last_start + 1 < needed ? last_start - 1 : len
+    start == 0 && return len
+    lead = unsafe_load(ptr, start)
+    (lead & 0x80) == 0 && return len
+    needed = (lead & 0xe0) == 0xc0 ? 2 :
+             (lead & 0xf0) == 0xe0 ? 3 :
+             (lead & 0xf8) == 0xf0 ? 4 : 1
+    len - start + 1 < needed ? start - 1 : len
 end
 
-function embedding(text::AbstractString, model::AbstractString)
-    value = String(text)
-    source = String(model)
-    Embedding(value, RustWorker.open(source, value))
-end
+embedding(text::AbstractString; vecpath="minishlab/potion-multilingual-128M") = Embedding(String(text), String(vecpath), nothing, ReentrantLock())
+embedding(uri::URI; vecpath="minishlab/potion-multilingual-128M") = embedding(plaintext(uri); vecpath)
 
-embedding(text::AbstractString; vecpath="minishlab/potion-multilingual-128M") = embedding(text, vecpath)
-embedding(uri::URI; vecpath="minishlab/potion-multilingual-128M") = embedding(gettext(uri), vecpath)
-
-distance(first::Embedding, second::AbstractString) = RustWorker.score(second, first.handle)
+distance(first::Embedding, second::AbstractString) = RustWorker.score(second, handle!(first))
 distance(first::Embedding, second::Embedding) = distance(first, second.text)
 
 function distance(source::Embedding, wet::WET{U,C,L}) where {U,C,L}
@@ -45,14 +52,14 @@ function distance(source::Embedding, wet::WET{U,C,L}) where {U,C,L}
     GC.@preserve reference pointers lengths scores begin
         ptr = Base.unsafe_convert(Ptr{WET{U,C,L}}, reference) + contentoffset(WET{U,C,L})
         pointers[firstindex(pointers)] = UInt(ptr)
-        lengths[firstindex(lengths)] = safe_length(Ptr{UInt8}(ptr), wet.content.length)
-        RustWorker.score!(scores, pointers, lengths, source.handle)
+        lengths[firstindex(lengths)] = utf8boundary(Ptr{UInt8}(ptr), wet.content.length)
+        RustWorker.score!(scores, pointers, lengths, handle!(source))
     end
 
     first(scores)
 end
 
-score(source::Embedding, wet::WET) = update(distance(source, wet), wet)
+score(source::Embedding, wet::WET) = rescore(wet, distance(source, wet))
 
 distance(string1::AbstractString, string2::AbstractString; vecpath="minishlab/potion-multilingual-128M") =
     distance(embedding(string1; vecpath), string2)
@@ -76,7 +83,7 @@ function score(entry::AC, wet::WET{U,C,L}) where {U,C,L}
     reference = Ref(wet)
     GC.@preserve reference begin
         ptr = Base.unsafe_convert(Ptr{WET{U,C,L}}, reference) + contentoffset(WET{U,C,L})
-        score(entry, Ptr{UInt8}(ptr), safe_length(Ptr{UInt8}(ptr), wet.content.length))
+        score(entry, Ptr{UInt8}(ptr), utf8boundary(Ptr{UInt8}(ptr), wet.content.length))
     end
 end
 
@@ -90,47 +97,12 @@ function score!(scores, pointers, lengths, source::Embedding, batch::AbstractVec
         foreach(eachindex(batch)) do i
             ptr = Base.unsafe_convert(Ptr{T}, references[i]) + contentoffset(T)
             pointers[i] = UInt(ptr)
-            lengths[i] = safe_length(Ptr{UInt8}(ptr), batch[i].content.length)
+            lengths[i] = utf8boundary(Ptr{UInt8}(ptr), batch[i].content.length)
         end
 
-        RustWorker.score!(scores, pointers, lengths, source.handle)
+        RustWorker.score!(scores, pointers, lengths, handle!(source))
     end
 
     scores
 end
 
-function publish!(filtered, batch, scores, threshold)
-    foreach(eachindex(batch, scores)) do i
-        candidate = update(scores[i], batch[i])
-        candidate.score <= 1.0 - threshold && put!(filtered, candidate)
-    end
-    empty!(batch)
-    filtered
-end
-
-function relevant!(source::Embedding, pages::Channel{T}; capacity=Threads.nthreads() * 10, threshold=0.6, batchsize=64) where {T<:WET}
-    Channel{T}(capacity) do filtered
-        tasks = [
-            Threads.@spawn begin
-                batch = T[]
-                scores = Float64[]
-                pointers = UInt[]
-                lengths = UInt[]
-
-                for wet in pages
-                    push!(batch, wet)
-                    length(batch) == batchsize || continue
-                    score!(scores, pointers, lengths, source, batch)
-                    publish!(filtered, batch, scores, threshold)
-                end
-
-                if !isempty(batch)
-                    score!(scores, pointers, lengths, source, batch)
-                    publish!(filtered, batch, scores, threshold)
-                end
-            end
-            for _ in 1:Threads.nthreads()
-        ]
-        foreach(wait, tasks)
-    end
-end

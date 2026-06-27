@@ -78,7 +78,7 @@ end
             password=settings["llm"]["password"],
             timeout=settings["llm"]["timeout"],
         )
-        @test get_message(data) == "strategy"
+        @test message(data) == "strategy"
         req = take!(service.requests)
         @test req["messages"][2]["content"] == string(inp, "\n\npage text")
         @test req["messages"][1]["role"] == "system"
@@ -93,7 +93,7 @@ end
             password=settings["llm"]["password"],
             timeout=settings["llm"]["timeout"],
         )
-        @test get_message(data) == "hallo"
+        @test message(data) == "hallo"
         req = take!(service.requests)
         @test req["messages"][2]["content"] == "Translate the following text into the language identified by the Common Crawl WET language code deu. Output only the translated text.\n\nhello"
         @test req["messages"][1]["content"] == "You translate text accurately. Output only the translation."
@@ -111,7 +111,7 @@ end
 
     try
         settings = testsettings(translated.baseurl; languages=["fra"])
-        result = keywords(settings, "seed article")
+        result = extractkeywords(settings, "seed article")
         @test result == ["breakout", "trend"]
         req = take!(translated.requests)
         @test occursin("seed article", req["messages"][2]["content"])
@@ -128,7 +128,7 @@ end
 
     try
         settings = testsettings(unservice.baseurl; languages=["eng"])
-        result = MonsieurPapin.summary(settings, "seed article")
+        result = MonsieurPapin.summarize(settings, "seed article")
         @test result == "a short summary"
         req = take!(unservice.requests)
         @test occursin("Summarize in at most 140 characters", req["messages"][2]["content"])

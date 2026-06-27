@@ -40,33 +40,28 @@ end
 
 simhash(text::AbstractString) = simhash(codeunits(text))
 
-struct Deduper
+"""
+    SeenSet(capacity) -> SeenSet
+
+A fixed-capacity set of SimHash fingerprints with FIFO eviction — a bounded "seen set" for
+duplicate detection. Pass it to `unique(seen, stream)` to drop pages already seen within the
+window.
+"""
+struct SeenSet
     window::CircularBuffer{UInt64}
     seen::Set{UInt64}
-    
-    function Deduper(capacity::Int)
-        new(CircularBuffer{UInt64}(capacity), Set{UInt64}())
-    end
 end
 
-function seen!(deduper::Deduper, hash::UInt64)
-    if hash in deduper.seen
-        return true
-    end
-    
-    # CircularBuffer isfull check
-    if length(deduper.window) == deduper.window.capacity
-        oldest = popfirst!(deduper.window)
-        delete!(deduper.seen, oldest)
-    end
-    
-    push!(deduper.window, hash)
-    push!(deduper.seen, hash)
-    return false
-end
+SeenSet(capacity::Integer) = SeenSet(CircularBuffer{UInt64}(capacity), Set{UInt64}())
 
-isduplicate(deduper::Deduper, bytes::AbstractVector{UInt8}) = seen!(deduper, simhash(bytes))
-isduplicate(deduper::Deduper, text::AbstractString) = seen!(deduper, simhash(text))
+# True if `hash` was already present; otherwise records it (evicting the oldest when full).
+function seen!(set::SeenSet, hash::UInt64)
+    hash in set.seen && return true
+    length(set.window) == set.window.capacity && delete!(set.seen, popfirst!(set.window))
+    push!(set.window, hash)
+    push!(set.seen, hash)
+    false
+end
 
 function simhash(wet::WET{U,C,L}) where {U,C,L}
     reference = Ref(wet)
@@ -77,6 +72,4 @@ function simhash(wet::WET{U,C,L}) where {U,C,L}
     end
 end
 
-function isduplicate(deduper::Deduper, wet::WET{U,C,L}) where {U,C,L}
-    seen!(deduper, simhash(wet))
-end
+seen!(set::SeenSet, wet::WET) = seen!(set, simhash(wet))

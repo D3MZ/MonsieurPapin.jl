@@ -1,86 +1,92 @@
-using Base.Order: By, ReverseOrdering, ForwardOrdering, lt
+using Base.Order: Ordering, ForwardOrdering, ReverseOrdering, Forward, Reverse, By
 using DataStructures: BinaryHeap
+import DataStructures: heapify!
 
 score(wet::WET) = wet.score
 
-# Detect forward (lower=better) vs reverse (higher=better) from the ranking type.
-# ReverseOrdering(By(f)) wraps as By{f, ReverseOrdering{ForwardOrdering}} in Base.Order.
-_forward(::Type{<:By{F,ForwardOrdering}}) where {F} = true
-_forward(::Type{<:By{F,ReverseOrdering{ForwardOrdering}}}) where {F} = false
-
 # Mutable wrapper for cross-heap tracking. Both heaps hold references to the same object.
-mutable struct QueueEntry{T}
+mutable struct Entry{T}
     id::UInt64
     item::T
 end
-Base.isless(a::QueueEntry, b::QueueEntry) = score(a.item) < score(b.item)
 
-struct WETQueue{Value, Ranking<:Base.Ordering}
-    worst::BinaryHeap{QueueEntry{Value}}  # worst at top → evict
-    best::BinaryHeap{QueueEntry{Value}}   # best at top → extract
-    deleted::Set{UInt64}                  # IDs evicted from worst but still in best
-    counter::Base.RefValue{UInt64}
-    ranking::Ranking
+"""
+    BoundedPriorityQueue{T}(capacity[, order]) -> BoundedPriorityQueue
+
+A fixed-capacity collection that keeps the best `capacity` items seen, evicting the worst when
+full. `order` is `Forward` (lower score is better, e.g. embedding distance) or `Reverse` (higher
+score is better, e.g. keyword weight). The single inter-stage primitive of the waterfall: it is
+a bounded priority queue *and* a thread-safe, closeable, iterable channel.
+
+- `insert!`/`pop!` are the synchronous core: `insert!` is zero-allocation `O(log n)`, `pop!`
+  returns the current best (`O(n)`, deliberately — extraction is rare versus insertion).
+- `put!`/`take!`/`close` are the concurrent pipe: `put!` never blocks (it evicts), `take!`
+  blocks for the best available item until one arrives or the list is closed, and iteration
+  drains best-first. A faster producer simply means only the strongest candidates survive.
+"""
+mutable struct BoundedPriorityQueue{T}
+    worst::BinaryHeap{Entry{T}}  # worst at top → evict
+    best::BinaryHeap{Entry{T}}   # best at top → extract
+    deleted::Set{UInt64}         # ids evicted from worst but still lingering in best
+    counter::UInt64
+    higherbetter::Bool
     capacity::Int
+    available::Threads.Condition # signals take! when an item arrives or the list closes
+    open::Bool
 end
 
-function WETQueue(capacity::Int, ::Type{Value}, ranking::Ranking=By(score)) where {Value, Ranking<:Base.Ordering}
-    forward = _forward(typeof(ranking))
-    by_entry = By(e -> score(e.item))
-    rev_entry = ReverseOrdering(by_entry)
-
-    WETQueue{Value,Ranking}(
-        forward ? BinaryHeap{QueueEntry{Value}}(rev_entry) : BinaryHeap{QueueEntry{Value}}(by_entry),
-        forward ? BinaryHeap{QueueEntry{Value}}(by_entry)  : BinaryHeap{QueueEntry{Value}}(rev_entry),
-        Set{UInt64}(),
-        Ref(UInt64(0)),
-        ranking,
-        capacity,
-    )
+function BoundedPriorityQueue{T}(capacity::Integer, order::Ordering=Forward) where {T}
+    higherbetter = order isa ReverseOrdering
+    low = By(entry -> score(entry.item))    # min-on-score at top
+    high = ReverseOrdering(low)             # max-on-score at top
+    worst = BinaryHeap{Entry{T}}(higherbetter ? low : high)
+    best = BinaryHeap{Entry{T}}(higherbetter ? high : low)
+    sizehint!(worst.valtree, capacity)
+    sizehint!(best.valtree, capacity)
+    BoundedPriorityQueue{T}(worst, best, Set{UInt64}(), UInt64(0), higherbetter, capacity, Threads.Condition(), true)
 end
 
-Base.length(queue::WETQueue) = length(queue.worst)
-Base.isempty(queue::WETQueue) = isempty(queue.worst)
-Base.eltype(::WETQueue{Value}) where {Value} = Value
-isfull(queue::WETQueue) = length(queue) >= queue.capacity
+Base.length(list::BoundedPriorityQueue) = length(list.worst)
+Base.isempty(list::BoundedPriorityQueue) = isempty(list.worst)
+Base.eltype(::Type{<:BoundedPriorityQueue{T}}) where {T} = T
+Base.eltype(list::BoundedPriorityQueue) = eltype(typeof(list))
+isfull(list::BoundedPriorityQueue) = length(list) >= list.capacity
 
-function insert!(queue::WETQueue{<:WET,Ranking}, item::WET) where {Ranking}
-    entry = QueueEntry(queue.counter[] + 1, item)
-    !isfull(queue) && return _pushboth!(queue, entry)
-    lt(queue.ranking, item, first(queue.worst).item) || return queue
-    # Evict worst — track its ID so best heap can skip it
-    evicted = pop!(queue.worst)
-    push!(queue.deleted, evicted.id)
-    _pushboth!(queue, entry)
+isbetter(list::BoundedPriorityQueue, a, b) = list.higherbetter ? score(a) > score(b) : score(a) < score(b)
+
+# --- Synchronous core ---
+
+function insert!(list::BoundedPriorityQueue{T}, item::T) where {T}
+    entry = Entry(list.counter + 1, item)
+    isfull(list) || return pushboth!(list, entry)
+    isbetter(list, item, first(list.worst).item) || return list
+    push!(list.deleted, pop!(list.worst).id)  # evict worst, remember its id for `best`
+    pushboth!(list, entry)
 end
 
-function _pushboth!(queue::WETQueue, entry)
-    queue.counter[] = entry.id
-    push!(queue.worst, entry)
-    push!(queue.best, entry)
-    queue
+function pushboth!(list::BoundedPriorityQueue, entry::Entry)
+    list.counter = entry.id
+    push!(list.worst, entry)
+    push!(list.best, entry)
+    list
 end
 
-insert!(queue::WETQueue{<:WET}, channel::Channel{<:WET}) =
-    foreach(item -> insert!(queue, item), channel)
+insert!(list::BoundedPriorityQueue, source::Channel) = (foreach(item -> insert!(list, item), source); list)
 
-function Base.pop!(queue::WETQueue)
-    isempty(queue) && return nothing
-    # Pop best, skipping entries evicted from worst
-    while !isempty(queue.best)
-        entry = pop!(queue.best)
-        if entry.id in queue.deleted
-            delete!(queue.deleted, entry.id)
+function Base.pop!(list::BoundedPriorityQueue)
+    while !isempty(list.best)
+        entry = pop!(list.best)
+        if entry.id in list.deleted
+            delete!(list.deleted, entry.id)
             continue
         end
-        # Remove from worst heap too — scan for matching id
-        _remove!(queue.worst, entry.id)
+        remove!(list.worst, entry.id)
         return entry.item
     end
     nothing
 end
 
-function _remove!(heap::BinaryHeap, id::UInt64)
+function remove!(heap::BinaryHeap, id::UInt64)
     values = heap.valtree
     for i in eachindex(values)
         if values[i].id == id
@@ -91,10 +97,46 @@ function _remove!(heap::BinaryHeap, id::UInt64)
     end
 end
 
-best!(queue::WETQueue) = pop!(queue)
+# --- Concurrent pipe ---
 
-function best(source; capacity=10, ranking=By(score))
-    queue = WETQueue(capacity, eltype(source), ranking)
-    insert!(queue, source)
-    best!(queue)
+function Base.put!(list::BoundedPriorityQueue, item)
+    lock(list.available)
+    try
+        insert!(list, item)
+        notify(list.available)
+    finally
+        unlock(list.available)
+    end
+    list
 end
+
+function Base.take!(list::BoundedPriorityQueue)
+    lock(list.available)
+    try
+        while isempty(list) && list.open
+            wait(list.available)
+        end
+        return pop!(list)
+    finally
+        unlock(list.available)
+    end
+end
+
+function Base.close(list::BoundedPriorityQueue)
+    lock(list.available)
+    try
+        list.open = false
+        notify(list.available; all=true)
+    finally
+        unlock(list.available)
+    end
+    nothing
+end
+
+Base.isopen(list::BoundedPriorityQueue) = list.open
+
+function Base.iterate(list::BoundedPriorityQueue, ::Nothing=nothing)
+    item = take!(list)
+    isnothing(item) ? nothing : (item, nothing)
+end
+Base.IteratorSize(::Type{<:BoundedPriorityQueue}) = Base.SizeUnknown()

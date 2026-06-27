@@ -1,5 +1,5 @@
 using MonsieurPapin, BenchmarkTools, Statistics, Test, HTTP, JSON, Sockets
-import MonsieurPapin: insert!, score, content, gettext, distance, similarity, relevant!
+import MonsieurPapin: insert!, score, content, plaintext, distance, similarity
 
 # USE REAL DATASETS, NOT SIMULATED FOR BENCHMARKING.
 urispath = joinpath(@__DIR__, "..", "data", "wet.paths.gz")
@@ -28,13 +28,13 @@ start_time = time()
 # Run a lightweight version of each benchmark to get timing
 @info "Starting benchmark timing..."
 
-# wetURIs benchmark
+# wetpaths benchmark
 try
-    benchmark = @benchmark sum(_ -> 1, wetURIs($urispath)) samples=1 seconds=2
+    benchmark = @benchmark sum(_ -> 1, wetpaths($urispath)) samples=1 seconds=2
     time_taken = median(benchmark).time / 1e9
-    @info "wetURIs benchmark completed" time=time_taken
+    @info "wetpaths benchmark completed" time=time_taken
 catch e
-    @info "wetURIs benchmark failed" error=string(e)
+    @info "wetpaths benchmark failed" error=string(e)
     time_taken = 1.0  # penalty time
 end
 

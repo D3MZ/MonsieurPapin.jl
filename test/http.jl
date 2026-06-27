@@ -2,7 +2,7 @@ using Test
 using HTTP: URI
 using MonsieurPapin
 
-@testset "gettext" begin
+@testset "plaintext" begin
     page = """
     <html>
       <head>
@@ -17,10 +17,10 @@ using MonsieurPapin
     </html>
     """
 
-    @test gettext(page) == "Example Hello & Goodbye Plain text."
+    @test plaintext(page) == "Example Hello & Goodbye Plain text."
 
     if get(ENV, "MONSIEURPAPIN_LIVE_TESTS", "false") == "1"
-        page = gettext(URI("http://example.com"))
+        page = plaintext(URI("http://example.com"))
         @test occursin("Example Domain", page)
     end
 end

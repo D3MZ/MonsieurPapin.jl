@@ -114,13 +114,13 @@ impl StaticModel {
         })
     }
 
-    pub fn encode(&self, sentences: &[String]) -> Result<Vec<Vec<f32>>> {
+    pub fn encode<S: AsRef<str>>(&self, sentences: &[S]) -> Result<Vec<Vec<f32>>> {
         self.encode_with_args(sentences, Some(512), 1024)
     }
 
-    pub fn encode_with_args(
+    pub fn encode_with_args<S: AsRef<str>>(
         &self,
-        sentences: &[String],
+        sentences: &[S],
         max_length: Option<usize>,
         batch_size: usize,
     ) -> Result<Vec<Vec<f32>>> {
@@ -130,9 +130,10 @@ impl StaticModel {
             let inputs = batch
                 .iter()
                 .map(|text| {
+                    let text = text.as_ref();
                     max_length
                         .map(|max| truncate(text, max, self.median))
-                        .unwrap_or(text.as_str())
+                        .unwrap_or(text)
                 })
                 .collect::<Vec<_>>();
             let encodings = self

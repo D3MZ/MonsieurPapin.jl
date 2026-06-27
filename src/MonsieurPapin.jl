@@ -5,11 +5,13 @@ using DataStructures: BinaryHeap
 import DataStructures: heapify!
 using HTTP: URI
 export URI
-export WET, WETQueue, wetURIs, wets, loadsettings, Embedding, embedding, distance, score, request, fetchtext, gettext, language, languages, isrelevant, relevant!, best!, best, research, harvest, semantic, append!, prompt, AC, simhash, Deduper, isduplicate
-export get_message, keywords, summary
+export WET, BoundedPriorityQueue, SeenSet, AC, Embedding
+export wets, wetpaths, loadsettings, research, select, extract
+export embedding, distance, similarity, isrelevant, score, simhash
+export request, message, extractkeywords, summarize, fetchtext, plaintext, language, languages, prompt
 
 
-include("wetURIs.jl")
+include("wetpaths.jl")
 include("wets.jl")
 include("RustWorker.jl")
 include("ahocorasick.jl")

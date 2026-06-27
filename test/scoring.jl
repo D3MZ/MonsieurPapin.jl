@@ -1,5 +1,6 @@
 using BenchmarkTools
 using CodecZlib
+using Dates
 using MonsieurPapin
 using Test
 
@@ -35,10 +36,20 @@ end
     @test MonsieurPapin.score(matcher, first(sample)) == 3.0
     @test MonsieurPapin.score(matcher, last(sample)) == 4.0
 
+    # The content pointer Rust slices must land on the real content bytes (struct-layout guard).
+    text = "héllo wörld"
+    page = WET(MonsieurPapin.Snippet("u", Val(8)), MonsieurPapin.Snippet(text, Val(64)),
+        MonsieurPapin.Snippet("eng", Val(8)), DateTime(2026, 1, 1), ncodeunits(text), 0.0)
+    reference = Ref(page)
+    GC.@preserve reference begin
+        pointer = Ptr{UInt8}(Base.unsafe_convert(Ptr{typeof(page)}, reference) + MonsieurPapin.contentoffset(typeof(page)))
+        @test unsafe_string(pointer, MonsieurPapin.utf8boundary(pointer, page.content.length)) == MonsieurPapin.content(page)
+    end
+
     if get(ENV, "MONSIEURPAPIN_MODEL2VEC", "false") == "true"
         source = embedding("cat dog")
         banana = embedding("banana")
-        records = collect(relevant!(source, pages(); threshold=-1.0))
+        records = collect(select(source, pages(); capacity=10))
         scores = map(wet -> wet.score, records)
 
         @test distance(source, "kitten dog") < distance(source, "banana")

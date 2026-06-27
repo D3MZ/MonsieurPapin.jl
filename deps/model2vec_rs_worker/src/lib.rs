@@ -66,12 +66,14 @@ fn close(handle: usize) -> Nothing {
 
 fn score(handle: usize, textpointers: &[usize], textlengths: &[usize]) -> Result<Vec<f64>> {
     let state = unsafe { &*(handle as *const State) };
+    // Borrow the Julia-owned bytes directly; from_utf8_lossy only allocates for invalid UTF-8
+    // (Cow::Owned), and encode() takes AsRef<str>, so valid pages cross the boundary copy-free.
     let texts = textpointers
         .iter()
         .zip(textlengths.iter())
         .map(|(&pointer, &length)| {
             let bytes = unsafe { slice::from_raw_parts(pointer as *const u8, length) };
-            String::from_utf8_lossy(bytes).into_owned()
+            String::from_utf8_lossy(bytes)
         })
         .collect::<Vec<_>>();
     let embeddings = state.model.encode(&texts)?;

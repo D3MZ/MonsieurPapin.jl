@@ -1,5 +1,12 @@
 # Conventions
 
+## Naming and terminology
+- Always use standard, idiomatic terminology — never invented or non-native terms.
+- Prefer the established name for a concept: a fixed-capacity queue that evicts its worst
+  element is a "bounded priority queue", not a "competing queue". Follow Julia conventions
+  (`UpperCamelCase` types, lowercase functions with words run together, `!` for mutation, name
+  by the operation and dispatch on the argument).
+
 ## No defensive programming
 - No try-catch blocks
 - No fallback values or default branches

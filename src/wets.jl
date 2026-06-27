@@ -6,17 +6,14 @@ end
 function Snippet(bytes::AbstractVector{UInt8}, start, stop, ::Val{N}) where {N}
     len = min(N, max(stop - start + 1, 0))
     len == 0 && return Snippet{N}((ntuple(i -> zero(UInt8), N)), 0)
-    
-    # Use Ref approach but avoid unnecessary memset
+
     tuple = Ref{NTuple{N,UInt8}}()
     ptr = Base.unsafe_convert(Ptr{UInt8}, tuple)
-    # Skip memset since we'll overwrite the data anyway
     GC.@preserve bytes tuple unsafe_copyto!(ptr, pointer(bytes, start), len)
     Snippet{N}(tuple[], len)
 end
 
 Snippet(text::AbstractString, ::Val{N}) where {N} = (u = codeunits(text); Snippet(u, firstindex(u), lastindex(u), Val(N)))
-Snippet(::AbstractString, ::Val{N}) where {N} = Snippet{N}((ntuple(i -> zero(UInt8), N)), 0)
 
 struct WET{U,C,L}
     uri::Snippet{U}
@@ -27,7 +24,7 @@ struct WET{U,C,L}
     score::Float64
 end
 
-update(value, wet::WET) = WET(wet.uri, wet.content, wet.languages, wet.date, wet.length, value)
+rescore(wet::WET, value) = WET(wet.uri, wet.content, wet.languages, wet.date, wet.length, value)
 
 const urilimit = 4096
 const contentlimit = 12000
@@ -43,25 +40,24 @@ const lengthprefix = codeunits("Content-Length:")
 
 # --- Accessors ---
 
-function utf8_truncate(bytes::AbstractVector{UInt8}, max_len::Int)
-    kept = max_len
+# Largest length <= len that ends on a UTF-8 character boundary, for a content buffer.
+function utf8boundary(bytes::AbstractVector{UInt8}, len::Integer)
+    kept = len
     while kept > 0 && (bytes[kept] & 0xc0) == 0x80
         kept -= 1
     end
     if kept > 0 && (bytes[kept] & 0x80) != 0
-        b = bytes[kept]
-        needed = (b & 0xe0) == 0xc0 ? 2 :
-                 (b & 0xf0) == 0xe0 ? 3 :
-                 (b & 0xf8) == 0xf0 ? 4 : 1
-        if max_len - kept + 1 < needed
-            kept -= 1
-        end
+        lead = bytes[kept]
+        needed = (lead & 0xe0) == 0xc0 ? 2 :
+                 (lead & 0xf0) == 0xe0 ? 3 :
+                 (lead & 0xf8) == 0xf0 ? 4 : 1
+        len - kept + 1 < needed && (kept -= 1)
     end
     kept
 end
 
-function clean(bytes::AbstractVector{UInt8})
-    kept = utf8_truncate(bytes, length(bytes))
+function decode(bytes::AbstractVector{UInt8})
+    kept = utf8boundary(bytes, length(bytes))
     String(bytes[1:kept])
 end
 
@@ -70,7 +66,7 @@ function text(snippet::Snippet{N}, limit::Int=snippet.length) where {N}
     bytes = Vector{UInt8}(undef, len)
     tuple = Ref(snippet.bytes)
     GC.@preserve tuple bytes unsafe_copyto!(pointer(bytes), Base.unsafe_convert(Ptr{UInt8}, tuple), len)
-    clean(bytes)
+    decode(bytes)
 end
 
 uri(wet::WET) = text(wet.uri)
@@ -106,72 +102,72 @@ function wets(paths::Channel{T}; capacity=Threads.nthreads() * 10, wetroot="http
             end
         end
     end
-end 
+end
 
 # --- Processing Pipeline ---
 
 function emit(channel, stream::IO, languages)
-    line, body = Vector{UInt8}(), Vector{UInt8}(undef, contentlimit)
+    line, buffer = Vector{UInt8}(), Vector{UInt8}(undef, contentlimit)
     sizehint!(line, 256)
-    while !isnothing(read!(line, stream))
+    while !isnothing(readinto!(line, stream))
         matches(line, firstindex(line), warcprefix) || continue
-        entry = record(line, body, stream, languages)
+        entry = parserecord(line, buffer, stream, languages)
         isnothing(entry) || put!(channel, entry)
     end
 end
 
-function record(line, buffer, stream, languages)
-    kind, accepted, address, tongue, moment, bytes = header(line, stream, languages)
-    keep(kind, accepted, address, moment, bytes) || return (discard(stream, buffer, bytes); nothing)
-    body(address, tongue, moment, bytes, buffer, stream)
+function parserecord(line, buffer, stream, languages)
+    kind, accepted, address, tongue, moment, bytes = parseheader(line, stream, languages)
+    keepable(kind, accepted, address, moment, bytes) || return (discard(stream, buffer, bytes); nothing)
+    readbody(address, tongue, moment, bytes, buffer, stream)
 end
 
-function header(line, stream, languages)
+function parseheader(line, stream, languages)
     kind, accepted, address, tongue, moment, bytes = false, isnothing(languages), nothing, nothing, nothing, 0
-    while !blank(line)
+    while !isblank(line)
         kind = kind ? true : isconversion(line)
-        address = extract(address, line, uriprefix, Val(urilimit))
-        tongue, accepted = extract(tongue, accepted, line, languageprefix, Val(languagelimit), languages)
-        moment = extract(moment, line, dateprefix)
-        bytes = extract(bytes, line, lengthprefix)
-        isnothing(read!(line, stream)) && return (kind, accepted, address, tongue, moment, bytes)
+        address = parsefield(address, line, uriprefix, Val(urilimit))
+        tongue, accepted = parsefield(tongue, accepted, line, languageprefix, Val(languagelimit), languages)
+        moment = parsefield(moment, line, dateprefix)
+        bytes = parsefield(bytes, line, lengthprefix)
+        isnothing(readinto!(line, stream)) && return (kind, accepted, address, tongue, moment, bytes)
     end
     (kind, accepted, address, tongue, moment, bytes)
 end
 
-function body(address, tongue, moment, bytes, buffer, stream)
+function readbody(address, tongue, moment, bytes, buffer, stream)
     kept = min(bytes, contentlimit)
     readbytes!(stream, buffer, kept) == kept || return nothing
-    
+
     if kept > 0 && bytes > kept
-        kept = utf8_truncate(buffer, kept)
+        kept = utf8boundary(buffer, kept)
     end
 
     bytes > min(bytes, contentlimit) && discard(stream, buffer, bytes - min(bytes, contentlimit))
     WET(address, Snippet(buffer, firstindex(buffer), kept, Val(contentlimit)), something(tongue, Snippet("", Val(languagelimit))), moment, bytes, Inf)
 end
 
-# --- Field Extraction ---
+# --- Field Parsing ---
 
-isconversion(line) = (v = linevalue(line, firstindex(line), stop(line), typeprefix); !isnothing(v) && length(v) == length(conversion) && matches(line, first(v), conversion))
+isconversion(line) = (v = linevalue(line, firstindex(line), lineend(line), typeprefix); !isnothing(v) && length(v) == length(conversion) && matches(line, first(v), conversion))
 
-extract(val::Snippet, line, prefix, limit) = val
-extract(::Nothing, line, prefix, limit) = (b = linevalue(line, firstindex(line), stop(line), prefix); isnothing(b) ? nothing : Snippet(line, first(b), last(b), limit))
-extract(val::Snippet, accepted, line, prefix, limit, languages) = (val, accepted)
+parsefield(val::Snippet, line, prefix, limit) = val
+parsefield(::Nothing, line, prefix, limit) = (b = linevalue(line, firstindex(line), lineend(line), prefix); isnothing(b) ? nothing : Snippet(line, first(b), last(b), limit))
+parsefield(val::Snippet, accepted, line, prefix, limit, languages) = (val, accepted)
 
-function extract(::Nothing, accepted, line, prefix, limit, languages)
-    bounds = linevalue(line, firstindex(line), stop(line), prefix)
+function parsefield(::Nothing, accepted, line, prefix, limit, languages)
+    bounds = linevalue(line, firstindex(line), lineend(line), prefix)
     isnothing(bounds) && return (nothing, accepted)
     matched = accepted || accepts(languages, line, bounds)
     matched ? (Snippet(line, first(bounds), last(bounds), limit), matched) : (nothing, matched)
 end
 
-extract(val::DateTime, line, prefix) = val
-extract(::Nothing, line, prefix) = (b = linevalue(line, firstindex(line), stop(line), prefix); isnothing(b) ? nothing : parsedatetime(line, b))
+parsefield(val::DateTime, line, prefix) = val
+parsefield(::Nothing, line, prefix) = (b = linevalue(line, firstindex(line), lineend(line), prefix); isnothing(b) ? nothing : parsedatetime(line, b))
 
-extract(val::Int, line, prefix) = val != 0 ? val : (b = linevalue(line, firstindex(line), stop(line), prefix); isnothing(b) ? 0 : parseint(line, b))
+parsefield(val::Int, line, prefix) = val != 0 ? val : (b = linevalue(line, firstindex(line), lineend(line), prefix); isnothing(b) ? 0 : parseint(line, b))
 
-keep(kind, accepted, uri, date, len) = kind && accepted && !isnothing(uri) && !isnothing(date) && len != 0
+keepable(kind, accepted, uri, date, len) = kind && accepted && !isnothing(uri) && !isnothing(date) && len != 0
 
 function linevalue(bytes, start, stop, prefix)
     matches(bytes, start, prefix) || return nothing
@@ -200,26 +196,26 @@ end
 function parseint(bytes, bounds)
     val = 0
     for i in bounds
-        val = 10 * val + digit(bytes[i])
+        val = 10 * val + todigit(bytes[i])
     end
     val
 end
 
 function parsedatetime(bytes, b)
     s = first(b)
-    DateTime(1000digit(bytes[s]) + 100digit(bytes[s+1]) + 10digit(bytes[s+2]) + digit(bytes[s+3]),
-        10digit(bytes[s+5]) + digit(bytes[s+6]), 10digit(bytes[s+8]) + digit(bytes[s+9]),
-        10digit(bytes[s+11]) + digit(bytes[s+12]), 10digit(bytes[s+14]) + digit(bytes[s+15]),
-        10digit(bytes[s+17]) + digit(bytes[s+18]))
+    DateTime(1000todigit(bytes[s]) + 100todigit(bytes[s+1]) + 10todigit(bytes[s+2]) + todigit(bytes[s+3]),
+        10todigit(bytes[s+5]) + todigit(bytes[s+6]), 10todigit(bytes[s+8]) + todigit(bytes[s+9]),
+        10todigit(bytes[s+11]) + todigit(bytes[s+12]), 10todigit(bytes[s+14]) + todigit(bytes[s+15]),
+        10todigit(bytes[s+17]) + todigit(bytes[s+18]))
 end
 
 # --- Low-level Utilities ---
 
 function matches(bytes, start, prefix)
-    prefix_len = length(prefix)
-    stop = start + prefix_len - 1
+    width = length(prefix)
+    stop = start + width - 1
     stop > lastindex(bytes) && return false
-    for i in 0:prefix_len-1
+    for i in 0:width-1
         bytes[start + i] == prefix[i+1] || return false
     end
     return true
@@ -241,17 +237,23 @@ function trim(bytes, left, right)
     left:right
 end
 
-stop(bytes) = (i = lastindex(bytes); i >= firstindex(bytes) && bytes[i] == 0x0a && (i -= 1); i >= firstindex(bytes) && bytes[i] == 0x0d && (i -= 1); i)
-blank(bytes) = stop(bytes) < firstindex(bytes)
-digit(byte) = Int(byte - 0x30)
+lineend(bytes) = (i = lastindex(bytes); i >= firstindex(bytes) && bytes[i] == 0x0a && (i -= 1); i >= firstindex(bytes) && bytes[i] == 0x0d && (i -= 1); i)
+isblank(bytes) = lineend(bytes) < firstindex(bytes)
+todigit(byte) = Int(byte - 0x30)
 
-function read!(bytes, stream)
+# Read one line (excluding the trailing newline) into the reused buffer. The buffer keeps its
+# capacity across calls, so steady-state header parsing is allocation-free — unlike `readuntil`,
+# which allocates a fresh array per line.
+function readinto!(bytes, stream)
     eof(stream) && return nothing
     resize!(bytes, 0)
-    Base.append!(bytes, readuntil(stream, 0x0a))
+    while !eof(stream)
+        byte = read(stream, UInt8)
+        byte == 0x0a && break
+        push!(bytes, byte)
+    end
     bytes
 end
-
 
 function discard(stream, buffer, count)
     rem = count

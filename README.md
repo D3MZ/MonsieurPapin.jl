@@ -34,20 +34,6 @@ As a waterfall, each stage only processes the top candidates from the previous s
 
 See [test/benchmarks.jl](test/benchmarks.jl) for how to reproduce these numbers.
 
-## Recent Performance Improvements
-
-Through targeted optimizations focused on the WET parsing pipeline and Snippet construction, MonsieurPapin now achieves approximately **35% faster** WET record parsing (41,500 records/s vs original 27,100 records/s) while maintaining full functionality.
-
-Key optimizations include:
-- Elimination of unnecessary memory initialization operations
-- Improved Snippet construction efficiency  
-- Enhanced character matching functions (reduced allocations and iterator overhead)
-- Optimized string handling for common cases
-
-All changes are performance-preserving - the system produces identical output while consuming fewer computational resources.
-
-See [OPTIMIZATION_SUMMARY.md](OPTIMIZATION_SUMMARY.md) for detailed optimization documentation.
-
 ## Quick Start
 
 ### Prerequisites
@@ -115,4 +101,4 @@ flowchart TD
     G --> D
 ```
 
-**Key principles**: bounded queues evict lower-ranked candidates when full; expensive stages process the best survivors from the previous stage; near-duplicates compete rather than being hard-dropped.
+**Key principles**: bounded priority queues evict the lowest-ranked candidate when full; expensive stages process the best survivors from the previous stage; the higher-ranked of two near-duplicates is kept rather than hard-dropped.
