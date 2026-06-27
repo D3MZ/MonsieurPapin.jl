@@ -28,7 +28,7 @@ Measured on Apple M1 Max (32 GB) + Julia 1.12, single-threaded, on a 21,465-page
 | Model2Vec embedding scoring | ~700 records/s | 7/record | O(N·L) | O(N·L / P) |
 | Queue insert (top 1K) | 23,000 records/s | 0/record steady | O(N·log C) | O(N·log C) † |
 | Queue pop! extraction | 925,000 pops/s | 1/pop | O(C·log C) | O(C·log C) † |
-| LLM extraction | ~0.4 ms/page (mock) | — | O(C) | O(C) † |
+| LLM extraction | ~0.1 pages/s | — | O(C) | O(C) † |
 
 As a waterfall, each stage only processes the top candidates from the previous stage — the pipeline doesn't need to run every page through every stage.
 
