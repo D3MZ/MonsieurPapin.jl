@@ -32,6 +32,15 @@ Measured on Apple M1 Max (32 GB) + Julia 1.12, single-threaded, on a 21,465-page
 
 As a waterfall, each stage only processes the top candidates from the previous stage — the pipeline doesn't need to run every page through every stage.
 
+The two front stages — where the full crawl flows through — are parallelized across all cores. Measured on the same M1 Max (8 threads), against the single-threaded figures above:
+
+| Stage | Serial | Parallel (8 threads) | Speedup |
+| --- | --- | --- | --- |
+| SimHash deduplication | 9,900 records/s | 71,900 records/s | 7.2× |
+| Multi-file WET parsing | 24,900 records/s | 90,300 records/s | 3.6× |
+
+Dedup scales near-linearly because the SimHash fingerprint (CPU-bound) runs per-worker while only the cheap seen-set check is locked. Multi-file parsing overlaps per-file network I/O and decompression across workers, so it scales with available bandwidth rather than a single stream.
+
 Allocation counts are what scale to a full crawl. Header parsing reads into a reused buffer rather than allocating per line, so steady-state record parsing is allocation-free; the small per-record figures above are amortized one-time stream setup. Every stage that consumes the WET stream inherits this, keeping heap pressure flat across billions of pages.
 
 See [test/benchmarks.jl](test/benchmarks.jl) for how to reproduce these numbers.
