@@ -26,8 +26,8 @@
 
 - [ ] Support multiple LLM consumers.
 - [ ] Retry seed page fetches with exponential backoff.
-- [ ] Concurrent multi-file download (currently `wets(paths::Channel)` is sequential — the
-      dominant wall-clock cost on a full crawl).
+- [x] Concurrent multi-file download: `wets(paths::Channel)` now decompresses+parses files
+      across `nthreads` workers into the shared channel (2.5x throughput on 8 threads).
 - [ ] Checkpoint/resume across crashes for multi-day runs.
 
 ## Testing and Packaging

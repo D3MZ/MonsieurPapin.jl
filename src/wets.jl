@@ -95,10 +95,15 @@ end
 
 function wets(paths::Channel{T}; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/", languages=nothing) where {T}
     Channel{WET{urilimit,contentlimit,languagelimit}}(capacity) do channel
-        for path in paths
-            HTTP.open("GET", wetroot * path) do stream
-                HTTP.startread(stream)
-                emit(channel, GzipDecompressorStream(BufferedInputStream(stream)), languages)
+        # Each worker pulls whole files from `paths` and decompresses+parses them concurrently
+        # into the shared channel, overlapping per-file network I/O and CPU. Records from
+        # different files interleave, which downstream stages tolerate (order-independent).
+        @sync for _ in 1:Threads.nthreads()
+            Threads.@spawn for path in paths
+                HTTP.open("GET", wetroot * path) do stream
+                    HTTP.startread(stream)
+                    emit(channel, GzipDecompressorStream(BufferedInputStream(stream)), languages)
+                end
             end
         end
     end
