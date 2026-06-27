@@ -20,17 +20,19 @@ This ain't your ordinary digester: Search the entire internet, filter, extract, 
 
 Measured on Apple M1 Max (32 GB) + Julia 1.12, single-threaded, on a 21,465-page WET sample from the February 2026 Common Crawl archive (2.1 billion pages, 5.96 TiB compressed).
 
-| Stage | Rate |
-| --- | --- |
-| WET record parsing | 41,500 records/s |
-| SimHash deduplication | 3,250 records/s |
-| Aho-Corasick keyword scoring | 22,100 records/s |
-| Model2Vec embedding scoring | +400 records/s |
-| Queue insert (top 1K) | 22,000 records/s |
-| Queue best! extraction | 1,100,000 pops/s |
-| LLM extraction | ~0.6 ms (mock), ~0.1 pages/s (real) |
+| Stage | Rate | Allocations |
+| --- | --- | --- |
+| WET record parsing | 23,500 records/s | 4/record (0 in steady state) |
+| SimHash deduplication | 3,100 records/s | 6/record |
+| Aho-Corasick keyword scoring | 19,000 records/s | 7/record |
+| Model2Vec embedding scoring | ~700 records/s | 7/record |
+| Queue insert (top 1K) | 20,000 records/s | 5/record |
+| Queue pop! extraction | 270,000 pops/s | 1/pop |
+| LLM extraction | ~0.4 ms (mock), ~0.1 pages/s (real) | — |
 
 As a waterfall, each stage only processes the top candidates from the previous stage — the pipeline doesn't need to run every page through every stage.
+
+Allocation counts are what scale to a full crawl. Header parsing reads into a reused buffer rather than allocating per line, so steady-state record parsing is allocation-free; the small per-record figures above are amortized one-time stream setup. Every stage that consumes the WET stream inherits this, keeping heap pressure flat across billions of pages.
 
 See [test/benchmarks.jl](test/benchmarks.jl) for how to reproduce these numbers.
 
@@ -101,4 +103,4 @@ flowchart TD
     G --> D
 ```
 
-**Key principles**: bounded priority queues evict the lowest-ranked candidate when full; expensive stages process the best survivors from the previous stage; the higher-ranked of two near-duplicates is kept rather than hard-dropped.
+**Key principles**: bounded priority queues evict the lowest-ranked candidate when full; expensive stages process the best survivors from the previous stage; near-duplicates within a SimHash window are dropped before scoring.
