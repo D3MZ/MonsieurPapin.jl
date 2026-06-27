@@ -14,10 +14,20 @@ window.
 """
 function Base.unique(seen::SeenSet, source::Channel{T}) where {T}
     Channel{T}(Threads.nthreads() * 10; spawn=true) do novel
-        scratch = Ref{T}()                   # reused box: hash each WET without allocating
-        counts = Vector{Int32}(undef, 64)    # reused SimHash accumulator
-        for wet in source
-            seen!(seen, wet, scratch, counts) || put!(novel, wet)
+        # SimHash (CPU-bound) runs in parallel across workers; only the cheap seen-set check is
+        # serialized under a lock. Each worker owns its scratch/accumulator. Which of two
+        # near-duplicates survives is nondeterministic, but downstream is order-independent.
+        guard = ReentrantLock()
+        @sync for _ in 1:Threads.nthreads()
+            Threads.@spawn begin
+                scratch = Ref{T}()
+                counts = Vector{Int32}(undef, 64)
+                for wet in source
+                    hash = simhash(wet, scratch, counts)
+                    duplicate = lock(() -> seen!(seen, hash), guard)
+                    duplicate || put!(novel, wet)
+                end
+            end
         end
     end
 end
