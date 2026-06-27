@@ -1,14 +1,7 @@
-using Base.Order: Ordering, ForwardOrdering, ReverseOrdering, Forward, Reverse, By
-using DataStructures: BinaryHeap
-import DataStructures: heapify!
+using Base.Order: Ordering, ReverseOrdering, Forward, Reverse, By
+using DataStructures: MutableBinaryHeap
 
 score(wet::WET) = wet.score
-
-# Mutable wrapper for cross-heap tracking. Both heaps hold references to the same object.
-mutable struct Entry{T}
-    id::UInt64
-    item::T
-end
 
 """
     BoundedPriorityQueue{T}(capacity[, order]) -> BoundedPriorityQueue
@@ -18,32 +11,42 @@ full. `order` is `Forward` (lower score is better, e.g. embedding distance) or `
 score is better, e.g. keyword weight). The single inter-stage primitive of the waterfall: it is
 a bounded priority queue *and* a thread-safe, closeable, iterable channel.
 
-- `insert!`/`pop!` are the synchronous core: `insert!` is zero-allocation `O(log n)`, `pop!`
-  returns the current best (`O(n)`, deliberately — extraction is rare versus insertion).
+Items live by value in a fixed `items` arena (slots reused on eviction). Two mutable heaps hold
+only `Int` slot handles — the worst on top of one, the best on top of the other — cross-linked
+so eviction and extraction remove from *both* in `O(log n)`. Memory is strictly `O(capacity)`:
+no per-item boxing and no lazily-deleted backlog, so a fast producer feeding a slow consumer
+keeps only the strongest `capacity` survivors resident.
+
+- `insert!`/`pop!` are the synchronous core: `insert!` evicts the worst when full and allocates
+  nothing in steady state; `pop!` returns the current best. Both are `O(log n)`.
 - `put!`/`take!`/`close` are the concurrent pipe: `put!` never blocks (it evicts), `take!`
   blocks for the best available item until one arrives or the list is closed, and iteration
-  drains best-first. A faster producer simply means only the strongest candidates survive.
+  drains best-first.
 """
 mutable struct BoundedPriorityQueue{T}
-    worst::BinaryHeap{Entry{T}}  # worst at top → evict
-    best::BinaryHeap{Entry{T}}   # best at top → extract
-    deleted::Set{UInt64}         # ids evicted from worst but still lingering in best
-    counter::UInt64
-    higherbetter::Bool
+    items::Vector{T}                # arena: items[slot] holds an item by value
+    worst::MutableBinaryHeap{Int}   # slots, worst-by-score on top → evict
+    best::MutableBinaryHeap{Int}    # slots, best-by-score on top → extract
+    worsth::Vector{Int}             # slot -> its stable handle in the worst heap
+    besth::Vector{Int}              # slot -> its stable handle in the best heap
+    free::Vector{Int}               # reusable slots freed by eviction/extraction
     capacity::Int
-    available::Threads.Condition # signals take! when an item arrives or the list closes
+    higherbetter::Bool
+    available::Threads.Condition    # signals take! when an item arrives or the list closes
     open::Bool
 end
 
 function BoundedPriorityQueue{T}(capacity::Integer, order::Ordering=Forward) where {T}
     higherbetter = order isa ReverseOrdering
-    low = By(entry -> score(entry.item))    # min-on-score at top
-    high = ReverseOrdering(low)             # max-on-score at top
-    worst = BinaryHeap{Entry{T}}(higherbetter ? low : high)
-    best = BinaryHeap{Entry{T}}(higherbetter ? high : low)
-    sizehint!(worst.valtree, capacity)
-    sizehint!(best.valtree, capacity)
-    BoundedPriorityQueue{T}(worst, best, Set{UInt64}(), UInt64(0), higherbetter, capacity, Threads.Condition(), true)
+    items = T[]
+    sizehint!(items, capacity)
+    byscore = By(slot -> score(items[slot]))
+    rev = ReverseOrdering(byscore)
+    # worst-on-top: lowest score when higher-is-better, highest score otherwise.
+    worst = MutableBinaryHeap{Int}(higherbetter ? byscore : rev)
+    best = MutableBinaryHeap{Int}(higherbetter ? rev : byscore)
+    BoundedPriorityQueue{T}(items, worst, best, Int[], Int[], Int[], Int(capacity),
+                            higherbetter, Threads.Condition(), true)
 end
 
 Base.length(list::BoundedPriorityQueue) = length(list.worst)
@@ -57,44 +60,45 @@ isbetter(list::BoundedPriorityQueue, a, b) = list.higherbetter ? score(a) > scor
 # --- Synchronous core ---
 
 function insert!(list::BoundedPriorityQueue{T}, item::T) where {T}
-    entry = Entry(list.counter + 1, item)
-    isfull(list) || return pushboth!(list, entry)
-    isbetter(list, item, first(list.worst).item) || return list
-    push!(list.deleted, pop!(list.worst).id)  # evict worst, remember its id for `best`
-    pushboth!(list, entry)
+    if isfull(list)
+        worstslot = first(list.worst)
+        isbetter(list, item, list.items[worstslot]) || return list  # reject before touching the arena
+        evict!(list, worstslot)
+    end
+    pushslot!(list, slot!(list, item))
 end
 
-function pushboth!(list::BoundedPriorityQueue, entry::Entry)
-    list.counter = entry.id
-    push!(list.worst, entry)
-    push!(list.best, entry)
+# Place an item into a free slot (or grow the arena to capacity), returning the slot.
+function slot!(list::BoundedPriorityQueue{T}, item::T) where {T}
+    isempty(list.free) || (slot = pop!(list.free); list.items[slot] = item; return slot)
+    push!(list.items, item)
+    push!(list.worsth, 0)
+    push!(list.besth, 0)
+    lastindex(list.items)
+end
+
+function pushslot!(list::BoundedPriorityQueue, slot::Int)
+    list.worsth[slot] = push!(list.worst, slot)
+    list.besth[slot] = push!(list.best, slot)
     list
+end
+
+# Drop the worst slot from both heaps and return it to the free list.
+function evict!(list::BoundedPriorityQueue, slot::Int)
+    pop!(list.worst)                       # slot is the worst heap's top
+    delete!(list.best, list.besth[slot])
+    push!(list.free, slot)
 end
 
 insert!(list::BoundedPriorityQueue, source::Channel) = (foreach(item -> insert!(list, item), source); list)
 
 function Base.pop!(list::BoundedPriorityQueue)
-    while !isempty(list.best)
-        entry = pop!(list.best)
-        if entry.id in list.deleted
-            delete!(list.deleted, entry.id)
-            continue
-        end
-        remove!(list.worst, entry.id)
-        return entry.item
-    end
-    nothing
-end
-
-function remove!(heap::BinaryHeap, id::UInt64)
-    values = heap.valtree
-    for i in eachindex(values)
-        if values[i].id == id
-            deleteat!(values, i)
-            isempty(values) || heapify!(values, heap.ordering)
-            return
-        end
-    end
+    isempty(list.best) && return nothing
+    slot = pop!(list.best)
+    delete!(list.worst, list.worsth[slot])
+    item = list.items[slot]
+    push!(list.free, slot)
+    item
 end
 
 # --- Concurrent pipe ---

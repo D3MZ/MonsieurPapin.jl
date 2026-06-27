@@ -26,8 +26,8 @@ Measured on Apple M1 Max (32 GB) + Julia 1.12, single-threaded, on a 21,465-page
 | SimHash deduplication | 3,100 records/s | 6/record |
 | Aho-Corasick keyword scoring | 19,000 records/s | 7/record |
 | Model2Vec embedding scoring | ~700 records/s | 7/record |
-| Queue insert (top 1K) | 20,000 records/s | 5/record |
-| Queue pop! extraction | 270,000 pops/s | 1/pop |
+| Queue insert (top 1K) | 23,000 records/s | 0/record (steady state) |
+| Queue pop! extraction | 925,000 pops/s | 1/pop |
 | LLM extraction | ~0.4 ms (mock), ~0.1 pages/s (real) | — |
 
 As a waterfall, each stage only processes the top candidates from the previous stage — the pipeline doesn't need to run every page through every stage.
