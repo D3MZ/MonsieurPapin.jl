@@ -18,28 +18,21 @@ This ain't your ordinary digester: Search the entire internet, filter, extract, 
 
 ## Performance Benchmarks
 
-Measured on Apple M1 Max (32 GB) + Julia 1.12, single-threaded, on a 21,465-page WET sample from the February 2026 Common Crawl archive (2.1 billion pages, 5.96 TiB compressed).
+Measured on Apple M1 Max (32 GB) + Julia 1.12, single-threaded, on a 21,465-page WET sample from the February 2026 Common Crawl archive (2.1 billion pages, 5.96 TiB compressed). Complexity columns use **N** = pages streamed, **L** = content bytes per page (capped at 12 KB), **C** = shortlist capacity, **P** = worker threads.
 
-| Stage | Rate | Allocations |
-| --- | --- | --- |
-| WET record parsing | 23,500 records/s | 4/record (0 in steady state) |
-| SimHash deduplication | 7,300 records/s | 0/record (stage) |
-| Aho-Corasick keyword scoring | 19,000 records/s | 7/record |
-| Model2Vec embedding scoring | ~700 records/s | 7/record |
-| Queue insert (top 1K) | 23,000 records/s | 0/record (steady state) |
-| Queue pop! extraction | 925,000 pops/s | 1/pop |
-| LLM extraction | ~0.4 ms (mock), ~0.1 pages/s (real) | — |
+| Stage | Serial speed | Heap allocs | Big-O serial | Big-O parallel |
+| --- | --- | --- | --- | --- |
+| WET record parsing | 23,500 records/s | 0/record steady (4 setup) | O(N·L) | O(N·L / P) |
+| SimHash deduplication | 7,300 records/s | 0/record | O(N·L) | O(N·L / P) |
+| Aho-Corasick keyword scoring | 19,000 records/s | 7/record | O(N·L) | O(N·L / P) |
+| Model2Vec embedding scoring | ~700 records/s | 7/record | O(N·L) | O(N·L / P) |
+| Queue insert (top 1K) | 23,000 records/s | 0/record steady | O(N·log C) | O(N·log C) † |
+| Queue pop! extraction | 925,000 pops/s | 1/pop | O(C·log C) | O(C·log C) † |
+| LLM extraction | ~0.4 ms/page (mock) | — | O(C) | O(C) † |
 
 As a waterfall, each stage only processes the top candidates from the previous stage — the pipeline doesn't need to run every page through every stage.
 
-The two front stages — where the full crawl flows through — are parallelized across all cores. Measured on the same M1 Max (8 threads), against the single-threaded figures above:
-
-| Stage | Serial | Parallel (8 threads) | Speedup |
-| --- | --- | --- | --- |
-| SimHash deduplication | 9,900 records/s | 71,900 records/s | 7.2× |
-| Multi-file WET parsing | 24,900 records/s | 90,300 records/s | 3.6× |
-
-Dedup scales near-linearly because the SimHash fingerprint (CPU-bound) runs per-worker while only the cheap seen-set check is locked. Multi-file parsing overlaps per-file network I/O and decompression across workers, so it scales with available bandwidth rather than a single stream.
+The four streaming stages are embarrassingly parallel per record (`O(N·L / P)`); `†` marks stages that stay serial — the queue mutates under a single lock and the LLM stage drains single-consumer (multiple consumers is a TODO), so it's the scoring that feeds them that parallelizes. The two front stages, where the full crawl flows, hit these parallel bounds in practice on 8 threads: dedup **7.2×** (9,900 → 71,900 records/s, near-linear since only the seen-set check is locked) and multi-file parsing **3.6×** (24,900 → 90,300 records/s, bounded by bandwidth as workers overlap per-file I/O and decompression).
 
 Allocation counts are what scale to a full crawl. Header parsing reads into a reused buffer rather than allocating per line, so steady-state record parsing is allocation-free; the small per-record figures above are amortized one-time stream setup. Every stage that consumes the WET stream inherits this, keeping heap pressure flat across billions of pages.
 
