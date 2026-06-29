@@ -44,7 +44,6 @@ function extractkeywords(settings, text; limitinput=2000, timeout=settings["llm"
         password=settings["llm"]["password"],
         timeout=timeout,
         thinking=get(settings["llm"], "thinking", false),
-        maxtokens=3500,        # safety bound; the bounded prompt naturally finishes well under this
         temperature=0.2,
         responseformat=Dict(
             "type" => "json_schema",
