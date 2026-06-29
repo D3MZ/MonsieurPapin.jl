@@ -45,9 +45,29 @@ thinking = false
 path = "research.md"
 
 [prompts]
-system = "You extract trading strategies, technical indicators, and algorithms from web pages. The page may be in any language; always write your answer in English, translating any non-English content. If the page contains no trading strategy, indicator, or algorithm, reply with exactly: none"
-input = "Describe any trading strategy, indicator, or algorithm found on this page. Write entirely in English regardless of the page's language. Include the source URL and pseudo-code if applicable. If there is nothing relevant, reply with exactly: none"
-local_system = "You extract trading strategies and financial indicators from web pages. The page may be in any language; always write your answer in English, translating any non-English content. If nothing relevant is present, reply with exactly: none"
-local_input = "Describe any trading strategy or indicator you find. Write entirely in English regardless of the page's language. Include the source URL and any relevant pseudo-code. If there is nothing relevant, reply with exactly: none"
+# Extraction prompts are tuned to keep only concrete, programmable strategies: rule-based logic with
+# entry/exit conditions and parameters stated ON THE PAGE, grounded by required pseudo-code. Generic
+# textbook indicator definitions, indicator name lists, one-off stock/ticker calls, and news all map
+# to `none`. The page may be in any language (Qwen handles 200+); output is always English.
+system = "You extract concrete, tradable trading strategies from web pages. A strategy qualifies ONLY if the page itself states actionable, rule-based logic you could program: at least one entry condition, at least one exit condition, and at least one concrete parameter (indicator settings, numeric thresholds, timeframe, stop-loss/target, or position sizing). A one-off stock or ticker recommendation (for example \"buy X, target Y, stop Z\") is NOT a strategy — it must be a reusable system, not a single call. The page may be in ANY language; read it natively and write your ENTIRE answer in English, translating faithfully. Report ONLY what the page states. Do NOT add rules from your own knowledge, do NOT infer or generalize, and do NOT use hedging words such as \"likely\", \"typically\", \"usually\", or \"generally\" — if you would need them, the rule is not on the page. Reply with exactly `none` (lowercase, nothing else) when the page merely names or defines indicators, lists them (menus, glossaries, tag/category pages), gives one-off buy/sell or ticker calls, only discusses markets or news, or is too vague to program as written."
+input = """
+Extract every concrete, tradable strategy stated on this page. For each strategy output, in English:
+- Name
+- Entry rule(s)
+- Exit rule(s)
+- Concrete parameters (indicator settings, thresholds, timeframe, stop/target, instrument)
+- Pseudo-code implementing EXACTLY the rules on the page (no invented values)
+- Source URL
+The pseudo-code must be grounded strictly in the page; if you cannot write pseudo-code from the stated rules, the strategy does not qualify. If the page provides no concrete, executable strategy, reply with exactly `none`."""
+local_system = "You extract concrete, tradable trading strategies from web pages. A strategy qualifies ONLY if the page itself states actionable, rule-based logic you could program: at least one entry condition, at least one exit condition, and at least one concrete parameter (indicator settings, numeric thresholds, timeframe, stop-loss/target, or position sizing). A one-off stock or ticker recommendation (for example \"buy X, target Y, stop Z\") is NOT a strategy — it must be a reusable system, not a single call. The page may be in ANY language; read it natively and write your ENTIRE answer in English, translating faithfully. Report ONLY what the page states. Do NOT add rules from your own knowledge, do NOT infer or generalize, and do NOT use hedging words such as \"likely\", \"typically\", \"usually\", or \"generally\" — if you would need them, the rule is not on the page. Reply with exactly `none` (lowercase, nothing else) when the page merely names or defines indicators, lists them (menus, glossaries, tag/category pages), gives one-off buy/sell or ticker calls, only discusses markets or news, or is too vague to program as written."
+local_input = """
+Extract every concrete, tradable strategy stated on this page. For each strategy output, in English:
+- Name
+- Entry rule(s)
+- Exit rule(s)
+- Concrete parameters (indicator settings, thresholds, timeframe, stop/target, instrument)
+- Pseudo-code implementing EXACTLY the rules on the page (no invented values)
+- Source URL
+The pseudo-code must be grounded strictly in the page; if you cannot write pseudo-code from the stated rules, the strategy does not qualify. If the page provides no concrete, executable strategy, reply with exactly `none`."""
 keywords_system = "You generate search keywords for finding trading strategies and technical indicators in a multilingual web crawl. List the 30 most important and widely-used trading strategies, technical indicators, oscillators, and chart patterns (no more than 30 concepts) — draw on both the provided text and your own knowledge of technical analysis. For EACH concept, output its name in English AND its common equivalent in EACH requested target language, each as a SEPARATE array element; never combine multiple terms or languages into one element, and never use commas or slashes inside an element. Keep each element a short keyword phrase. No duplicates, no descriptions, no numbering. Stop after the 30 concepts."
 summary_system = "Summarize this text."
