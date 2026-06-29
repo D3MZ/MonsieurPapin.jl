@@ -18,28 +18,26 @@ This ain't your ordinary digester: Search the entire internet, filter, extract, 
 
 ## Performance Benchmarks
 
-Measured with Julia 1.12 on the same 21,465-page WET sample from the February 2026 Common Crawl archive (2.1 billion pages, 5.96 TiB compressed), serial numbers single-threaded, across two machines:
+Measured with Julia 1.12 on a 21,465-page WET sample from the February 2026 Common Crawl archive (2.1 billion pages, 5.96 TiB compressed), serial numbers single-threaded, on two machines:
 
-- **M1 Max** — Apple M1 Max, 32 GB (10-core, 8 performance)
-- **Intel Core i7-7567U** — Intel Core i7-7567U @ 3.5 GHz, 16 GB (2-core / 4-thread, 2017), with the LLM offloaded to a server on the LAN
+- **Apple M1 Max** — 32 GB (10-core, 8 performance)
+- **Intel Core i7-7567U** — 16 GB (2-core / 4-thread)
 
 Complexity columns use **N** = pages streamed, **L** = content bytes per page (capped at 12 KB), **C** = shortlist capacity, **P** = worker threads.
 
-| Stage | M1 Max | Intel Core i7-7567U | Heap allocs | Big-O serial | Big-O parallel |
+| Stage | M1 Max | Core i7-7567U | Heap allocs | Big-O serial | Big-O parallel |
 | --- | --- | --- | --- | --- | --- |
 | WET record parsing | 23,500 records/s | 20,200 records/s | 0/record steady (4 setup) | O(N·L) | O(N·L / P) |
 | Aho-Corasick keyword scoring | 19,000 records/s | 15,200 records/s | 7/record | O(N·L) | O(N·L / P) |
 | SimHash deduplication | 7,300 records/s | 9,100 records/s | 0/record | O(N·L) | O(N·L / P) |
 | Model2Vec embedding scoring | ~700 records/s | ~310 records/s | 7/record | O(N·L) | O(N·L / P) |
 | Queue insert (top 1K) | 23,000 records/s | 19,200 records/s | 0/record steady | O(N·log C) | O(N·log C) † |
-| Queue pop! extraction | 925,000 pops/s | — § | 1/pop | O(C·log C) | O(C·log C) † |
-| LLM extraction | ~0.1 pages/s | ~0.1 pages/s ‡ | — | O(C) | O(C) † |
-
-The 2017 dual-core Intel Core i7-7567U lands within ~20–35% of the M1 Max on the pure-CPU streaming stages despite being a far weaker chip, and is actually *faster* on SimHash deduplication (memory-latency bound, where the M1's wider cores help less); the gap only widens on Model2Vec embedding (~2.3×), the most compute-heavy stage. `‡` LLM extraction runs against an external OpenAI-compatible server (on Intel Core i7-7567U, a networked Qwen3-27B host), so its rate is bound by that server, not the client CPU. `§` the `pop!` microbenchmark empties the 1,000-item queue on its first evaluation and then idles, so the per-pop figure is a measurement artifact rather than a CPU comparison; draining is pointer work and never the bottleneck on either machine.
+| Queue pop! extraction | 925,000 pops/s | 583,000 pops/s | 1/pop | O(C·log C) | O(C·log C) † |
+| LLM extraction | ~0.1 pages/s | — | — | O(C) | O(C) † |
 
 As a waterfall, each stage only processes the top candidates from the previous stage — the pipeline doesn't need to run every page through every stage.
 
-The four streaming stages are embarrassingly parallel per record (`O(N·L / P)`); `†` marks stages that stay serial — the queue mutates under a single lock and the LLM stage drains single-consumer (multiple consumers is a TODO), so it's the scoring that feeds them that parallelizes. On the M1 Max these parallel bounds hold on 8 threads: deduplication **7.2×** (9,900 → 71,900 records/s, near-linear since only the seen-set check is locked) and multi-file parsing **3.6×** (24,900 → 90,300 records/s, bounded by bandwidth as workers overlap per-file I/O and decompression). On Intel Core i7-7567U's 2 physical cores the headroom is far smaller: weighted Aho-Corasick scoring goes **1.5×** (48,700 → 72,400 records/s on pre-collected records).
+The four streaming stages are embarrassingly parallel per record (`O(N·L / P)`); `†` marks stages that stay serial — the queue mutates under a single lock and the LLM stage drains single-consumer (multiple consumers is a TODO), so it's the scoring that feeds them that parallelizes. These parallel bounds hold in practice on 8 threads: deduplication **7.2×** (9,900 → 71,900 records/s, near-linear since only the seen-set check is locked) and multi-file parsing **3.6×** (24,900 → 90,300 records/s, bounded by bandwidth as workers overlap per-file I/O and decompression).
 
 Allocation counts are what scale to a full crawl. Header parsing reads into a reused buffer rather than allocating per line, so steady-state record parsing is allocation-free; the small per-record figures above are amortized one-time stream setup. Every stage that consumes the WET stream inherits this, keeping heap pressure flat across billions of pages.
 

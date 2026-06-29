@@ -200,15 +200,18 @@ end
     end
 
     @testset "BoundedPriorityQueue pop! extraction from top 1K" begin
-        shortlist = BoundedPriorityQueue{typeof(first(wets(wetspath)))}(1_000)
-        insert!(shortlist, wets(wetspath))
-        retained = length(shortlist)
-        benchmark = @benchmark while !isempty($shortlist); pop!($shortlist); end samples=1 seconds=5
+        WETT = typeof(first(wets(wetspath)))
+        retained = length(let q = BoundedPriorityQueue{WETT}(1_000); insert!(q, wets(wetspath)); q end)
+        # Rebuild and refill a full queue in `setup` (excluded from timing) and force evals=1, so
+        # each timed run drains a populated queue exactly once. Without this, BenchmarkTools reuses
+        # one queue across many evaluations: the first drains it and the rest clock the empty `while`
+        # fast path, which auto-tunes evals upward and inflates the rate by orders of magnitude.
+        benchmark = @benchmark (while !isempty(q); pop!(q); end) setup=(q = BoundedPriorityQueue{$WETT}(1_000); insert!(q, wets($wetspath))) evals=1 samples=30 seconds=20
         time = median(benchmark).time / 1e9
         display(benchmark)
         pops_per_second = round(retained / time)
         @info "Benchmarking BoundedPriorityQueue pop! extraction" retained pops_per_second
-        @test pops_per_second >= 1_000_000
+        @test pops_per_second >= 100_000
     end
 
     @testset "LLM prompt + request overhead" begin
