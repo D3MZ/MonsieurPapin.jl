@@ -224,7 +224,10 @@ function bootstrap(settings)
     article = seedtext(seeds)
     isempty(strip(article)) && error("all seed fetches returned empty; cannot bootstrap (seeds=$seeds).")
     manual = settings["pipeline"]["keywords"]
-    raw = isempty(manual) ? extractkeywords(settings, article; limitinput=6_000, timeout=300) : manual
+    # One-time bootstrap call over a large (6 KB) multilingual seed sample: a 27B model emitting
+    # ~300 keyword phrases across many languages at ~30 tok/s legitimately runs several minutes,
+    # so give it a generous timeout (the grammar's maxItems bounds the output, not max_tokens).
+    raw = isempty(manual) ? extractkeywords(settings, article; limitinput=6_000, timeout=900) : manual
     keywords = cleankeywords(raw)
     length(keywords) < 10 && error("only $(length(keywords)) keywords after bootstrap; check keywords_system prompt or the LLM server.")
     # The semantic query is the clean multilingual keyword vocabulary itself, NOT the raw seed

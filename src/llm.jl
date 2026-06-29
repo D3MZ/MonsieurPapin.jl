@@ -58,10 +58,11 @@ function extractkeywords(settings, text; limitinput=2000, timeout=settings["llm"
                             # Bound the array so the grammar forces it closed. Without an upper
                             # bound a reasoning model (e.g. Qwen3) keeps emitting grammar-valid
                             # elements indefinitely — observed 17k+ tokens for one call, which
-                            # blows past any timeout. 30 concepts x up to ~16 target languages
-                            # ~= 480 elements, so 512 leaves headroom without capping max_tokens.
+                            # blows past any timeout. The prompt asks for 30 concepts x the target
+                            # languages (~300 elements for 10 languages); 350 trims the runaway
+                            # tail with headroom, without reintroducing a max_tokens cap.
                             "items" => Dict("type" => "string"),
-                            "maxItems" => 512,
+                            "maxItems" => 350,
                         ),
                     ),
                     "required" => ["keywords"],
