@@ -35,6 +35,11 @@ timeout = 180
 # prefills and makes each call hit the timeout; keep at 1 for this model. Raise only for a faster
 # or remote multi-slot server.
 parallel = 1
+# Off by default: reasoning models (e.g. Qwen3) otherwise spend the whole token budget on
+# chain-of-thought and return empty content, and extraction wants the answer directly. Sends
+# chat_template_kwargs.enable_thinking=false; servers that don't understand it ignore it. Set
+# true only if you specifically want chain-of-thought.
+thinking = false
 
 [output]
 path = "research.md"

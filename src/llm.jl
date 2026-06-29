@@ -1,6 +1,7 @@
 function request(; model::String, systemprompt::String, input::String,
                   baseurl::String, path::String, password::String="",
-                  timeout::Int=120, responseformat=nothing, maxtokens=nothing, temperature=nothing)
+                  timeout::Int=120, responseformat=nothing, maxtokens=nothing, temperature=nothing,
+                  thinking::Bool=false)
     body = Dict(
         "model" => model,
         "messages" => [
@@ -11,6 +12,10 @@ function request(; model::String, systemprompt::String, input::String,
     !isnothing(responseformat) && (body["response_format"] = responseformat)
     !isnothing(maxtokens) && (body["max_tokens"] = maxtokens)      # hard bound: stop runaway generation
     !isnothing(temperature) && (body["temperature"] = temperature)
+    # Thinking is off by default: reasoning models (e.g. Qwen3) otherwise spend the whole token
+    # budget on chain-of-thought and return empty content, and the extraction pipeline wants the
+    # answer directly anyway. Servers that don't understand this field ignore it.
+    thinking || (body["chat_template_kwargs"] = Dict("enable_thinking" => false))
     headers = ["Content-Type" => "application/json", "Authorization" => "Bearer $(password)"]
     response = HTTP.post(string(baseurl, path); headers=headers, body=JSON.json(body), readtimeout=timeout)
     return JSON.parse(String(response.body))
@@ -38,6 +43,7 @@ function extractkeywords(settings, text; limitinput=2000, timeout=settings["llm"
         path=settings["llm"]["path"],
         password=settings["llm"]["password"],
         timeout=timeout,
+        thinking=get(settings["llm"], "thinking", false),
         maxtokens=3500,        # safety bound; the bounded prompt naturally finishes well under this
         temperature=0.2,
         responseformat=Dict(
@@ -70,6 +76,7 @@ function summarize(settings, text; limit=140)
         path=settings["llm"]["path"],
         password=settings["llm"]["password"],
         timeout=settings["llm"]["timeout"],
+        thinking=get(settings["llm"], "thinking", false),
     )
     return message(response)
 end

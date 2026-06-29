@@ -132,7 +132,8 @@ function extract(source, settings, system, instruction, render; mode="a",
                     message(request(; model=settings["llm"]["model"], systemprompt=system,
                         input=string(instruction, "\n\n", render(wet)),
                         baseurl=settings["llm"]["baseurl"], path=settings["llm"]["path"],
-                        password=settings["llm"]["password"], timeout=settings["llm"]["timeout"]))
+                        password=settings["llm"]["password"], timeout=settings["llm"]["timeout"],
+                        thinking=get(settings["llm"], "thinking", false)))
                 catch err
                     @warn "extract LLM call failed; skipping page" exception=err
                     ""
