@@ -20,15 +20,15 @@ This ain't your ordinary digester: Search the entire internet, filter, extract, 
 
 Measured with Julia 1.12 on a 21,465-page WET sample from the February 2026 Common Crawl archive (2.1 billion pages, 5.96 TiB compressed), serial numbers single-threaded, on two machines:
 
-- **Apple M1 Max** — 32 GB (10-core, 8 performance)
-- **Intel Core i7-7567U** — 16 GB (2-core / 4-thread)
+- **2021 Apple M1 Max** — 32 GB (10-core, 8 performance)
+- **2017 Apple MacBook Pro, Intel Core i7-7567U** — 16 GB (2-core / 4-thread)
 
-Complexity columns use **N** = pages streamed, **L** = content bytes per page (capped at 12 KB), **C** = shortlist capacity, **P** = worker threads.
+Complexity columns use **N** = pages streamed, **L** = content bytes per page (capped at 12 KB), **C** = shortlist capacity, **P** = worker threads, **K** = keywords in the matcher (total length **M** bytes).
 
 | Stage | M1 Max | Core i7-7567U | Heap allocs | Big-O serial | Big-O parallel |
 | --- | --- | --- | --- | --- | --- |
 | WET record parsing | 23,500 records/s | 20,200 records/s | 0/record steady (4 setup) | O(N·L) | O(N·L / P) |
-| Aho-Corasick keyword scoring | 19,000 records/s | 15,200 records/s | 7/record | O(N·L) | O(N·L / P) |
+| Aho-Corasick keyword scoring | 19,000 records/s | 15,200 records/s | 7/record | O(N·L) ‡ | O(N·L / P) ‡ |
 | SimHash deduplication | 7,300 records/s | 9,100 records/s | 0/record | O(N·L) | O(N·L / P) |
 | Model2Vec embedding scoring | ~700 records/s | ~310 records/s | 7/record | O(N·L) | O(N·L / P) |
 | Queue insert (top 1K) | 23,000 records/s | 19,200 records/s | 0/record steady | O(N·log C) | O(N·log C) † |
@@ -38,6 +38,8 @@ Complexity columns use **N** = pages streamed, **L** = content bytes per page (c
 As a waterfall, each stage only processes the top candidates from the previous stage — the pipeline doesn't need to run every page through every stage.
 
 The four streaming stages are embarrassingly parallel per record (`O(N·L / P)`); `†` marks stages that stay serial — the queue mutates under a single lock and the LLM stage drains single-consumer (multiple consumers is a TODO), so it's the scoring that feeds them that parallelizes. These parallel bounds hold in practice on 8 threads: deduplication **7.2×** (9,900 → 71,900 records/s, near-linear since only the seen-set check is locked) and multi-file parsing **3.6×** (24,900 → 90,300 records/s, bounded by bandwidth as workers overlap per-file I/O and decompression).
+
+`‡` Aho-Corasick keyword scoring is **independent of the keyword count K**: the automaton makes one state transition per input byte whether it holds 50 keywords or 50,000, so scan throughput does not change as the keyword set grows. The `O(N·L)` cost above already includes matching every keyword at once. Adding keywords costs only a one-time `O(M)` automaton build at startup and proportional automaton memory — never scan time. (`N·L` itself is the upper bound; the waterfall only ever scans the pages the earlier stages admit.)
 
 Allocation counts are what scale to a full crawl. Header parsing reads into a reused buffer rather than allocating per line, so steady-state record parsing is allocation-free; the small per-record figures above are amortized one-time stream setup. Every stage that consumes the WET stream inherits this, keeping heap pressure flat across billions of pages.
 
