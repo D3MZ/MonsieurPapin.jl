@@ -13,6 +13,8 @@ scratch/
 tmp/
 *.vec
 research.md
+research copy.md
+/research_review/
 wet.paths.gz
 logo.png
 .pi/

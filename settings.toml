@@ -7,7 +7,20 @@ languages = ["eng", "deu", "rus", "jpn", "zho", "spa", "fra", "por", "ita", "pol
 capacity = 1000
 threshold = 0.6
 dedupe_capacity = 100000
+# Minimum distinct keyword hits for a page to enter the waterfall. Higher = more selective, so the
+# slow embedding stage is not flooded and download throughput is not throttled to embedding's rate.
+min_keywords = 4
+# Leave empty to bootstrap keywords from `seeds` via the LLM; set non-empty to override.
 keywords = []
+# Seed pages the run bootstraps from: fetched, then the LLM extracts multilingual trading
+# keywords + a semantic query. Keyword-dense, plain-HTML pages first (JS-rendered pages scrape
+# to almost nothing through the plain-HTTP fetch).
+seeds = [
+    "https://en.wikipedia.org/wiki/Technical_analysis",
+    "https://en.wikipedia.org/wiki/Trading_strategy",
+    "https://www.incrediblecharts.com/indicators/technical-indicators.php",
+    "https://www.incrediblecharts.com/indicators/moving_average.php",
+]
 
 [embedding]
 model = "minishlab/potion-multilingual-128M"
@@ -15,17 +28,21 @@ model = "minishlab/potion-multilingual-128M"
 [llm]
 baseurl = "http://localhost:1234"
 path = "/v1/chat/completions"
-model = "qwen/qwen3.6-27b"
+model = "google/gemma-4-12b-qat"
 password = ""
-timeout = 120
+timeout = 180
+# Concurrent LLM extraction calls. The single local model is compute-bound, so >1 just batches
+# prefills and makes each call hit the timeout; keep at 1 for this model. Raise only for a faster
+# or remote multi-slot server.
+parallel = 1
 
 [output]
 path = "research.md"
 
 [prompts]
-system = "Extract trading strategies, technical indicators, or algorithms from this page."
-input = "Describe any trading strategy, indicator, or algorithm found. Include the source URL and pseudo-code if applicable."
-local_system = "Extract trading strategies or financial indicators from this page."
-local_input = "Describe what you find, with the source URL and any relevant pseudo-code."
-keywords_system = "Extract keywords from this text."
+system = "You extract trading strategies, technical indicators, and algorithms from web pages. The page may be in any language; always write your answer in English, translating any non-English content. If the page contains no trading strategy, indicator, or algorithm, reply with exactly: none"
+input = "Describe any trading strategy, indicator, or algorithm found on this page. Write entirely in English regardless of the page's language. Include the source URL and pseudo-code if applicable. If there is nothing relevant, reply with exactly: none"
+local_system = "You extract trading strategies and financial indicators from web pages. The page may be in any language; always write your answer in English, translating any non-English content. If nothing relevant is present, reply with exactly: none"
+local_input = "Describe any trading strategy or indicator you find. Write entirely in English regardless of the page's language. Include the source URL and any relevant pseudo-code. If there is nothing relevant, reply with exactly: none"
+keywords_system = "You generate search keywords for finding trading strategies and technical indicators in a multilingual web crawl. List the 30 most important and widely-used trading strategies, technical indicators, oscillators, and chart patterns (no more than 30 concepts) — draw on both the provided text and your own knowledge of technical analysis. For EACH concept, output its name in English AND its common equivalent in EACH requested target language, each as a SEPARATE array element; never combine multiple terms or languages into one element, and never use commas or slashes inside an element. Keep each element a short keyword phrase. No duplicates, no descriptions, no numbering. Stop after the 30 concepts."
 summary_system = "Summarize this text."

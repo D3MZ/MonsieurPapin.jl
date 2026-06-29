@@ -32,6 +32,7 @@ mutable struct BoundedPriorityQueue{T}
     free::Vector{Int}               # reusable slots freed by eviction/extraction
     capacity::Int
     higherbetter::Bool
+    @atomic threshold::Float64      # lockless admission hint: score of the current worst when full
     available::Threads.Condition    # signals take! when an item arrives or the list closes
     open::Bool
 end
@@ -46,7 +47,7 @@ function BoundedPriorityQueue{T}(capacity::Integer, order::Ordering=Forward) whe
     worst = MutableBinaryHeap{Int}(higherbetter ? byscore : rev)
     best = MutableBinaryHeap{Int}(higherbetter ? rev : byscore)
     BoundedPriorityQueue{T}(items, worst, best, Int[], Int[], Int[], Int(capacity),
-                            higherbetter, Threads.Condition(), true)
+                            higherbetter, acceptall(higherbetter), Threads.Condition(), true)
 end
 
 Base.length(list::BoundedPriorityQueue) = length(list.worst)
@@ -57,6 +58,23 @@ isfull(list::BoundedPriorityQueue) = length(list) >= list.capacity
 
 isbetter(list::BoundedPriorityQueue, a, b) = list.higherbetter ? score(a) > score(b) : score(a) < score(b)
 
+# Threshold sentinel that admits everything (no cutoff until the list fills).
+acceptall(higherbetter::Bool) = higherbetter ? -Inf : Inf
+
+# Lockless fast-path admission: would an item of this score plausibly survive insertion? Read
+# without the lock so a hot producer can skip the vast majority of doomed `put!`s once the list is
+# full. The read may be stale, so `insert!` still re-checks under the lock — this only trims work.
+admits(list::BoundedPriorityQueue, s::Real) =
+    list.higherbetter ? s > (@atomic list.threshold) : s < (@atomic list.threshold)
+
+# Refresh the admission threshold to the current worst score (or accept-all when not full). Called
+# only from `insert!`/`pop!`, which run under the list lock in concurrent use.
+function syncthreshold!(list::BoundedPriorityQueue)
+    @atomic list.threshold = isfull(list) ?
+        Float64(score(list.items[first(list.worst)])) : acceptall(list.higherbetter)
+    nothing
+end
+
 # --- Synchronous core ---
 
 function insert!(list::BoundedPriorityQueue{T}, item::T) where {T}
@@ -66,6 +84,8 @@ function insert!(list::BoundedPriorityQueue{T}, item::T) where {T}
         evict!(list, worstslot)
     end
     pushslot!(list, slot!(list, item))
+    syncthreshold!(list)
+    list
 end
 
 # Place an item into a free slot (or grow the arena to capacity), returning the slot.
@@ -98,6 +118,7 @@ function Base.pop!(list::BoundedPriorityQueue)
     delete!(list.worst, list.worsth[slot])
     item = list.items[slot]
     push!(list.free, slot)
+    syncthreshold!(list)
     item
 end
 

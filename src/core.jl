@@ -39,14 +39,28 @@ end
 Keyword selection. Scores each page by keyword match and keeps the top `capacity` that match
 at least one keyword, evicting the weakest as stronger pages arrive.
 """
-function select(matcher::AC, source; capacity)
+function select(matcher::AC, source; capacity, minmatches=1)
     shortlist = BoundedPriorityQueue{eltype(source)}(capacity, Reverse)
     Threads.@spawn begin
-        scratch = Ref{eltype(source)}()      # reused box: score each WET without allocating
+        # The whole stream flows through keyword scoring, so it must keep up with network intake
+        # (single-threaded it falls below it and throttles the download). The AC automaton is
+        # immutable, so workers share it and each keeps its own scratch box; only the bounded
+        # shortlist is shared, and its put! is internally locked.
         try
-            for wet in source
-                value = score(matcher, wet, scratch)
-                value > 0 && put!(shortlist, rescore(wet, Float64(value)))
+            @sync for _ in 1:Threads.nthreads()
+                Threads.@spawn begin
+                    scratch = Ref{eltype(source)}()  # reused box: score each WET without allocating
+                    for wet in source
+                        value = score(matcher, wet, scratch)
+                        # Require at least `minmatches` keyword hits: a page tripped by one incidental
+                        # common word ("trend", "support") is dropped, so only keyword-dense pages flow
+                        # downstream. This keeps the embedding stage from being flooded (it is the
+                        # slowest streaming stage, ~10x slower than keyword scoring) and is also what
+                        # keeps ingest from throttling to embedding's rate. Skip the lock for matches
+                        # that can't make the shortlist anyway.
+                        value >= minmatches && admits(shortlist, Float64(value)) && put!(shortlist, rescore(wet, Float64(value)))
+                    end
+                end
             end
         finally
             close(shortlist)
@@ -62,11 +76,14 @@ end
 Embedding selection. Batches pages through the embedding model and keeps the top `capacity`
 nearest the query, spreading batches across all threads.
 """
-function select(query::Embedding, source; capacity, batchsize=64)
+function select(query::Embedding, source; capacity, batchsize=64, workers=max(1, Threads.nthreads() ÷ 2))
     shortlist = BoundedPriorityQueue{eltype(source)}(capacity)  # Forward: lower distance is better
     Threads.@spawn begin
-        workers = map(_ -> Threads.@spawn(embed!(shortlist, query, source, batchsize)), 1:Threads.nthreads())
-        foreach(wait, workers)
+        # Embedding is CPU-bound (Rust matmul) but only feeds the bounded shortlist that drains
+        # into the much slower LLM, so it needs only a few workers. Spawning one per thread starves
+        # the network-bound parse/decompress stages of cores and throttles ingest below line rate.
+        tasks = map(_ -> Threads.@spawn(embed!(shortlist, query, source, batchsize)), 1:workers)
+        foreach(wait, tasks)
         close(shortlist)
     end
     shortlist
@@ -90,14 +107,50 @@ end
 LLM extraction. Drains `source` best-first, sends each page to the LLM, and appends non-empty
 findings to the output file. `render` formats a page into prompt text.
 """
-function extract(source, settings, system, instruction, render; mode="a")
+# An LLM told to "return nothing" often emits a blank-ish placeholder (whitespace, zero-width
+# marks, code fences, "empty"/"none"/"NONE") instead of truly empty output. Treat those as no
+# finding so they never pollute the report.
+function informative(finding::AbstractString)
+    s = strip(finding, [' ', '\n', '\t', '\r', '`', '"', '\'', '*', '(', ')', '.', '·', '-',
+                        '​', '﻿', '　', '空'])
+    !isempty(s) && lowercase(s) ∉ ("empty", "empty string", "none", "null", "n/a", "na", "nil",
+                                   "no findings", "nothing", "no strategy", "no trading strategy")
+end
+
+function extract(source, settings, system, instruction, render; mode="a",
+                 workers=get(settings["llm"], "parallel", 4))
+    pages = Threads.Atomic{Int}(0); written = Threads.Atomic{Int}(0); t0 = time()
+    filelock = ReentrantLock()
     open(settings["output"]["path"], mode) do file
-        for wet in source
-            finding = message(request(; model=settings["llm"]["model"], systemprompt=system,
-                input=string(instruction, "\n\n", render(wet)),
-                baseurl=settings["llm"]["baseurl"], path=settings["llm"]["path"],
-                password=settings["llm"]["password"], timeout=settings["llm"]["timeout"]))
-            isempty(finding) || (write(file, strip(finding), "\n"); flush(file))
+        # Drain the shortlist with `workers` concurrent LLM calls (the LLM is the finding-rate
+        # bottleneck; the local server batches several in parallel). take! is thread-safe, so each
+        # worker pulls a distinct best-available page; the file write is serialized under a lock.
+        @sync for _ in 1:workers
+            Threads.@spawn for wet in source
+                ts = time()
+                finding = try   # one slow/timed-out page must not abort extraction
+                    message(request(; model=settings["llm"]["model"], systemprompt=system,
+                        input=string(instruction, "\n\n", render(wet)),
+                        baseurl=settings["llm"]["baseurl"], path=settings["llm"]["path"],
+                        password=settings["llm"]["password"], timeout=settings["llm"]["timeout"]))
+                catch err
+                    @warn "extract LLM call failed; skipping page" exception=err
+                    ""
+                end
+                p = Threads.atomic_add!(pages, 1) + 1
+                ok = informative(finding)
+                if ok
+                    lock(filelock) do
+                        write(file, strip(finding), "\n\n"); flush(file)
+                    end
+                    Threads.atomic_add!(written, 1)
+                end
+                w = written[]
+                println(stderr, "[extract] pages=$p written=$w sec=$(round(time()-ts;digits=0)) " *
+                                "informative=$ok rate=$(round(w/max(time()-t0,1)*3600;digits=0))/hr " *
+                                "dist=$(round(wet.score;digits=3)) uri=$(first(uri(wet),70))")
+                flush(stderr)
+            end
         end
     end
     nothing
@@ -105,29 +158,90 @@ end
 
 # --- Prompt rendering ---
 
-prompt(wet::WET) = string("URI: ", uri(wet), "\nLANGUAGE: ", language(wet), "\nSCORE: ", wet.score, "\n\n", content(wet))
-prompt(wet::WET, ::Val{:local}) = string("SOURCE URL: ", uri(wet), "\nLANGUAGE: ", language(wet), "\nDISTANCE: ", wet.score, "\n\nPAGE EXCERPT:\n", content(wet))
+# Cap page content sent to the LLM: a trading strategy is identifiable from the first few KB, and
+# prefilling the full 12 KB on a local model is the dominant per-page cost (and a timeout risk).
+const promptcontent = 6000
+prompt(wet::WET) = string("URI: ", uri(wet), "\nLANGUAGE: ", language(wet), "\nSCORE: ", wet.score, "\n\n", content(wet, promptcontent))
+prompt(wet::WET, ::Val{:local}) = string("SOURCE URL: ", uri(wet), "\nLANGUAGE: ", language(wet), "\nDISTANCE: ", wet.score, "\n\nPAGE EXCERPT:\n", content(wet, promptcontent))
 
 # --- Orchestration ---
 
-wetstream(settings) = wets(settings["crawl"]["path"]; capacity=settings["pipeline"]["capacity"], wetroot=settings["crawl"]["root"], languages=settings["crawl"]["languages"])
+# A `*.paths.gz` index lists many WET files for a whole crawl; stream them concurrently across
+# workers (`wets(::Channel)`). A direct WET file or URL is parsed as records on its own.
+function wetstream(settings)
+    path = settings["crawl"]["path"]
+    capacity = settings["pipeline"]["capacity"]
+    root = settings["crawl"]["root"]
+    languages = settings["crawl"]["languages"]
+    endswith(path, "paths.gz") ?
+        wets(wetpaths(path); capacity, wetroot=root, languages) :
+        wets(path; capacity, wetroot=root, languages)
+end
 
 # The shared pipeline: keyword -> dedup -> embedding, all bounded priority queues. Keyword
 # scoring (the cheapest filter) runs first to shrink the stream, then near-duplicates are
 # dropped, then survivors are ranked by embedding similarity. With no keywords the keyword
 # stage is skipped and the full stream is deduplicated before the embedding selection.
-pipeline(source, seen, ac, query, capacity) =
-    select(query, unique(seen, isnothing(ac) ? source : select(ac, source; capacity)); capacity)
+pipeline(source, seen, ac, query, capacity; minmatches=1) =
+    select(query, unique(seen, isnothing(ac) ? source : select(ac, source; capacity, minmatches)); capacity)
+
+# Fetch the seed pages tolerantly: a dead/blocked URL is logged and skipped rather than aborting
+# the whole run (`fetchtext` has no retry and throws on failure).
+function seedtext(urls)
+    pages = String[]
+    for url in urls
+        try
+            push!(pages, fetchtext(url))
+        catch err
+            @warn "Seed fetch failed; skipping." url exception=(err, catch_backtrace())
+        end
+    end
+    join(filter(!isempty, pages), "\n\n")
+end
+
+# Normalize the LLM's keyword list into atomic AC patterns. The model is inconsistent: sometimes it
+# packs all language variants of one concept into a single comma/slash-joined string (which would
+# become one pattern that never matches), so split on separators, trim, drop junk, and dedupe.
+function cleankeywords(raw)
+    out = String[]
+    for item in raw
+        for piece in split(string(item), r"[,/|;、，]+")
+            term = strip(piece)
+            2 <= length(term) <= 60 && push!(out, String(term))
+        end
+    end
+    unique(out)
+end
+
+# Bootstrap the keyword matcher and the semantic query from the seed URLs, asking the LLM for
+# multilingual trading keywords (README flow). Guards make a silent degrade impossible: an empty
+# seed list, all-empty fetches, or zero keywords each raise instead of quietly skipping a stage.
+# A non-empty `pipeline.keywords` in settings overrides the LLM and is used verbatim.
+function bootstrap(settings)
+    seeds = settings["pipeline"]["seeds"]
+    isempty(seeds) && error("pipeline.seeds is empty: seed URLs are required to bootstrap keywords + query.")
+    article = seedtext(seeds)
+    isempty(strip(article)) && error("all seed fetches returned empty; cannot bootstrap (seeds=$seeds).")
+    manual = settings["pipeline"]["keywords"]
+    raw = isempty(manual) ? extractkeywords(settings, article; limitinput=6_000, timeout=300) : manual
+    keywords = cleankeywords(raw)
+    length(keywords) < 10 && error("only $(length(keywords)) keywords after bootstrap; check keywords_system prompt or the LLM server.")
+    # The semantic query is the clean multilingual keyword vocabulary itself, NOT the raw seed
+    # article: article text is polluted with page chrome (nav/boilerplate) and fails to rank trading
+    # pages above unrelated ones. Keyword-joined query separates trading (~0.6-0.8) from junk (~1.0).
+    query = embedding(join(keywords, " "); vecpath=settings["embedding"]["model"])
+    @info "Bootstrap complete." seeds=length(seeds) articlechars=length(article) nkeywords=length(keywords) keywords
+    (AC(keywords), query)
+end
 
 function research(settings)
-    keywords = settings["pipeline"]["keywords"]
     capacity = settings["pipeline"]["capacity"]
     seen = SeenSet(settings["pipeline"]["dedupe_capacity"])
-    matcher = isempty(keywords) ? nothing : AC(keywords)
-    query = embedding(join(keywords, " "); vecpath=settings["embedding"]["model"])
-    best = pipeline(wetstream(settings), seen, matcher, query, capacity)
+    matcher, query = bootstrap(settings)
+    minmatches = get(settings["pipeline"], "min_keywords", 1)
+    best = pipeline(wetstream(settings), seen, matcher, query, capacity; minmatches)
     Threads.@spawn begin
-        extract(best, settings, settings["prompts"]["system"], settings["prompts"]["input"], prompt)
+        extract(best, settings, settings["prompts"]["system"], settings["prompts"]["input"], prompt; mode="w")
         @info "Research complete." outputpath=settings["output"]["path"]
     end
 end
