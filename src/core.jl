@@ -220,34 +220,64 @@ function cleankeywords(raw)
     unique(out)
 end
 
-# Bootstrap the keyword matcher and the semantic query from the seed URLs, asking the LLM for
-# multilingual trading keywords (README flow). Guards make a silent degrade impossible: an empty
-# seed list, all-empty fetches, or zero keywords each raise instead of quietly skipping a stage.
-# A non-empty `pipeline.keywords` in settings overrides the LLM and is used verbatim.
+# Build the per-language keyword filter, assembling each language from the first available of three
+# sources so the expensive LLM step only runs for what is genuinely missing:
+#   1. [crawl.manual_keywords] in settings.toml — terms a user hand-curates for their own native
+#      language(s); used verbatim, never regenerated or overwritten.
+#   2. the keyword cache file (pipeline.keyword_cache, JSON {lang => [terms]}) — keywords generated
+#      on a previous run, so reruns skip the build entirely. Users may also hand-edit this file.
+#   3. LLM generation, ONE call per language, fanned out over a Channel with `llm.parallel` workers.
+#      Per-language calls (vs. batches) stop the model collapsing to a dominant language, which is how
+#      low-resource languages lost coverage before. Newly generated languages are written to the cache.
+# The Channel makes the worker count purely a function of config: parallel=1 drains it sequentially,
+# parallel>1 fans out, with no other change.
+function languagekeywords(settings, article)
+    langs = settings["crawl"]["languages"]
+    manual = get(settings["crawl"], "manual_keywords", Dict{String,Any}())
+    cachepath = get(settings["pipeline"], "keyword_cache", "")
+    cache = (!isempty(cachepath) && isfile(cachepath)) ? JSON.parse(read(cachepath, String)) : Dict{String,Any}()
+    result = Dict{String,Vector{String}}()
+    todo = String[]
+    for l in langs
+        if haskey(manual, l) && !isempty(manual[l])
+            result[l] = String.(manual[l])
+        elseif haskey(cache, l) && !isempty(cache[l])
+            result[l] = String.(cache[l])
+        else
+            push!(todo, l)
+        end
+    end
+    if !isempty(todo)
+        @info "Generating keyword filter" generate=length(todo) reused=length(langs) - length(todo)
+        workers = max(1, get(settings["llm"], "parallel", 1))
+        jobs = Channel{String}(length(todo))
+        foreach(l -> put!(jobs, l), todo); close(jobs)
+        lk = ReentrantLock()
+        @sync for _ in 1:workers
+            Threads.@spawn for l in jobs
+                kw = cleankeywords(extractkeywords(settings, article; limitinput=6_000, timeout=900, langs=[l]))
+                lock(lk) do; result[l] = kw end
+            end
+        end
+        if !isempty(cachepath)
+            merged = merge(cache, Dict{String,Any}(l => result[l] for l in todo))
+            open(io -> write(io, JSON.json(merged)), cachepath, "w")
+        end
+    end
+    cleankeywords(reduce(vcat, [get(result, l, String[]) for l in langs]; init=String[]))
+end
+
+# Bootstrap the keyword matcher and the semantic query from the seed URLs (README flow). Guards make
+# a silent degrade impossible: an empty seed list, all-empty fetches, or zero keywords each raise
+# instead of quietly skipping a stage. A non-empty `pipeline.keywords` overrides everything verbatim;
+# otherwise keywords come from languagekeywords (manual config + cache + per-language LLM generation).
 function bootstrap(settings)
     seeds = settings["pipeline"]["seeds"]
     isempty(seeds) && error("pipeline.seeds is empty: seed URLs are required to bootstrap keywords + query.")
     article = seedtext(seeds)
     isempty(strip(article)) && error("all seed fetches returned empty; cannot bootstrap (seeds=$seeds).")
-    manual = settings["pipeline"]["keywords"]
-    # Generate idiomatic keywords for every target language in batches of 6: one big call collapses to
-    # a single language / starves later ones, so small batches guarantee full per-language coverage
-    # (validated: 6 languages -> ~25 concepts x 6 = ~150 multilingual terms per call). Each call is a
-    # one-time ~6 KB-seed prefill; the grammar's maxItems bounds each call's output. Aho-Corasick scan
-    # cost is independent of keyword count, so the large multilingual set is free at scan time.
-    # Batches run concurrently (one task per `llm.parallel` slot) so bootstrap uses the server's full
-    # concurrency instead of draining 27+ batches one at a time through an otherwise-idle slot pool.
-    if isempty(manual)
-        batches = collect(Iterators.partition(settings["crawl"]["languages"], 6))
-        workers = get(settings["llm"], "parallel", 4)
-        tasks = asyncmap(batches; ntasks=workers) do batch
-            extractkeywords(settings, article; limitinput=6_000, timeout=900, langs=collect(batch))
-        end
-        raw = reduce(vcat, tasks; init=String[])
-    else
-        raw = manual
-    end
-    keywords = cleankeywords(raw)
+    manual = get(settings["pipeline"], "keywords", String[])
+    keywords = isempty(manual) ? languagekeywords(settings, article) : cleankeywords(manual)
     length(keywords) < 10 && error("only $(length(keywords)) keywords after bootstrap; check keywords_system prompt or the LLM server.")
     # The semantic query is the clean multilingual keyword vocabulary itself, NOT the raw seed
     # article: article text is polluted with page chrome (nav/boilerplate) and fails to rank trading

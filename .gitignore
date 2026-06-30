@@ -18,3 +18,6 @@ research copy.md
 wet.paths.gz
 logo.png
 .pi/
+
+# Generated per-language keyword cache (regenerable; may be hand-edited per machine)
+keywords_cache.json

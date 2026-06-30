@@ -33,8 +33,14 @@ dedupe_capacity = 100000
 # Minimum distinct keyword hits for a page to enter the waterfall. Higher = more selective, so the
 # slow embedding stage is not flooded and download throughput is not throttled to embedding's rate.
 min_keywords = 4
-# Leave empty to bootstrap keywords from `seeds` via the LLM; set non-empty to override.
+# Leave empty to bootstrap keywords from `seeds` via the LLM; set non-empty to override ALL
+# languages with a single flat list (skips per-language generation entirely).
 keywords = []
+# Per-language keyword cache (JSON: {"iso639-3": ["term", ...]}). The bootstrap generates a language
+# only if it is absent here AND absent from [crawl.manual_keywords]; generated languages are written
+# back, so reruns skip the build. Delete a language's entry (or the file) to force regeneration.
+# Hand-editable. Lives outside settings.toml to avoid cluttering it with thousands of terms.
+keyword_cache = "keywords_cache.json"
 # Seed pages the run bootstraps from: fetched, then the LLM extracts multilingual trading
 # keywords + a semantic query. Keyword-dense, plain-HTML pages first (JS-rendered pages scrape
 # to almost nothing through the plain-HTTP fetch).
@@ -105,5 +111,12 @@ Extract every concrete, tradable, NOVEL strategy stated on this page — skip ge
 - Pseudo-code implementing EXACTLY the rules on the page (no invented values)
 - Source URL
 The pseudo-code must be grounded strictly in the page; if you cannot write pseudo-code from the stated rules, the strategy does not qualify. If the page provides no concrete, executable, non-obvious strategy, reply with exactly `none`."""
-keywords_system = "You generate broad, high-recall, MULTILINGUAL search keywords for finding pages that describe TRADING STRATEGIES in a web crawl. These keywords gate a cheap first-pass filter, so optimize for RECALL: the common words and short phrases that appear in almost ANY description of a trading strategy, regardless of indicator. Choose about 25 trading-rule/mechanics concepts — for example: trading strategy, trading system, entry, exit, signal, buy signal, sell signal, stop loss, take profit, price target, long position, short position, breakout, pullback, reversal, trend, momentum, support, resistance, backtest, risk management, position size, timeframe, crossover, overbought, oversold; plus only a FEW core indicators (moving average, RSI, MACD). Do NOT list many specific, exotic, or named indicators or chart patterns. CRITICAL — you MUST expand across languages: for EACH concept output a SEPARATE array element in EVERY ONE of the requested target languages; cover ALL listed languages and skip none, so with K target languages and ~25 concepts the array holds about 25*K elements. For each (concept, language) pair, give the term traders in THAT language actually use, written in that language's own script — idiomatic: a native word, a borrowed loanword (often the English term is kept as-is, e.g. \"RSI\", \"MACD\", \"breakout\", \"price action\"), or a localized phrase — NOT a literal word-for-word translation; use the real vocabulary of that language's trading community. Output each term as a SEPARATE array element; never combine multiple terms or languages into one element, and never use commas or slashes inside an element. No duplicates, no descriptions, no numbering."
+keywords_system = "You generate broad, high-recall, MULTILINGUAL search keywords for finding pages that describe TRADING STRATEGIES in a web crawl. These keywords gate a cheap first-pass filter, so optimize for RECALL: the common words and short phrases that appear in almost ANY description of a trading strategy, regardless of indicator. Choose about 25 trading-rule/mechanics concepts — for example: trading strategy, trading system, entry, exit, signal, buy signal, sell signal, stop loss, take profit, price target, long position, short position, breakout, pullback, reversal, trend, momentum, support, resistance, backtest, risk management, position size, timeframe, crossover, overbought, oversold; plus only a FEW core indicators (moving average, RSI, MACD). Do NOT list many specific, exotic, or named indicators or chart patterns. CRITICAL — you MUST expand across languages: for EACH concept output a SEPARATE array element in EVERY ONE of the requested target languages; cover ALL listed languages and skip none, so with K target languages and ~25 concepts the array holds about 25*K elements. For each (concept, language) pair, give the term traders in THAT language actually use, written in that language's own script — idiomatic: a native word, a borrowed loanword (often the English term is kept as-is, e.g. \"RSI\", \"MACD\", \"breakout\", \"price action\"), or a localized phrase — NOT a literal word-for-word translation; use the real vocabulary of that language's trading community. If a language has no established native trading vocabulary, do NOT invent words, transliterate, or repeat syllables to fill space — instead output the forms its traders genuinely use, which for such languages are typically the widely-recognized English/loanword terms (e.g. RSI, MACD, breakout, trading strategy); quality and authenticity matter more than hitting a count. Output each term as a SEPARATE array element; never combine multiple terms or languages into one element, and never use commas or slashes inside an element. No duplicates, no descriptions, no numbering."
 summary_system = "Summarize this text."
+# Optional hand-curated keyword filters per language (ISO 639-3 -> list of terms). Languages listed
+# here are used VERBATIM and never sent to the LLM — add your native language(s) to control their
+# filter directly. Languages NOT listed here (and not already in the keyword_cache) are generated by
+# the LLM. Empty by default. Example:
+#   [crawl.manual_keywords]
+#   eng = ["trading strategy", "stop loss", "breakout", "moving average crossover"]
+[crawl.manual_keywords]
