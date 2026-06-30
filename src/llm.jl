@@ -78,8 +78,8 @@ function extractkeywords(settings, text; limitinput=2000, timeout=settings["llm"
                             # bound a reasoning model (e.g. Qwen3) keeps emitting grammar-valid
                             # elements indefinitely — observed 17k+ tokens for one call, which
                             # blows past any timeout. Keywords are generated per language BATCH
-                            # (~12 languages x ~35 concepts ≈ 420 elements per call), so 512 gives
-                            # per-batch headroom without reintroducing a max_tokens cap.
+                            # (~6 languages x ~25 concepts = ~150 elements per call), so 512 gives
+                            # ample per-batch headroom without reintroducing a max_tokens cap.
                             "items" => Dict("type" => "string"),
                             "maxItems" => 512,
                         ),

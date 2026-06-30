@@ -230,14 +230,14 @@ function bootstrap(settings)
     article = seedtext(seeds)
     isempty(strip(article)) && error("all seed fetches returned empty; cannot bootstrap (seeds=$seeds).")
     manual = settings["pipeline"]["keywords"]
-    # Generate idiomatic keywords for every target language in batches of ~12: one giant call would
-    # hit the array cap and starve the later languages, so batching guarantees each language gets full
-    # concept coverage. Each call is a one-time ~6 KB-seed prefill at ~30 tok/s (minutes); the grammar's
-    # maxItems bounds each call's output. Aho-Corasick scan cost is independent of keyword count, so the
-    # resulting large multilingual set is free at scan time.
+    # Generate idiomatic keywords for every target language in batches of 6: one big call collapses to
+    # a single language / starves later ones, so small batches guarantee full per-language coverage
+    # (validated: 6 languages -> ~25 concepts x 6 = ~150 multilingual terms per call). Each call is a
+    # one-time ~6 KB-seed prefill at ~30 tok/s; the grammar's maxItems bounds each call's output.
+    # Aho-Corasick scan cost is independent of keyword count, so the large multilingual set is free.
     if isempty(manual)
         raw = String[]
-        for batch in Iterators.partition(settings["crawl"]["languages"], 12)
+        for batch in Iterators.partition(settings["crawl"]["languages"], 6)
             append!(raw, extractkeywords(settings, article; limitinput=6_000, timeout=900, langs=collect(batch)))
         end
     else
