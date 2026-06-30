@@ -55,15 +55,17 @@ model = "google/gemma-4-12b-qat"
 password = ""
 timeout = 180
 # Concurrent LLM extraction calls (read by extract() as its worker count). Tuning is hardware AND
-# server-engine bound: on a single 24 GB GPU, llama.cpp serving with MTP speculative decoding gave
-# ~31 tok/s single-stream but could NOT batch (MTP only works at one in-flight request; concurrency
-# just added queueing, flat aggregate throughput, linear latency). Switching the same GPU/model to
-# LM Studio's non-MTP continuous batching gave real concurrency: aggregate tok/s scaled with workers
-# (1x≈38, 2x≈57, 4x≈64, 6x≈71 tok/s, 8x started erroring on context budget) — measured ~2.3x the MTP
-# baseline at parallel=6, the chosen value. Re-tune per engine/hardware: this is an engine-and-VRAM
-# tradeoff (MTP trades batching for single-stream speed; batching trades single-request latency for
-# aggregate throughput, which is what this pipeline's finding-rate actually depends on).
-parallel = 6
+# server-engine bound, and what matters is throughput on the REAL traffic mix, not a synthetic
+# always-long-output benchmark. On a single 24 GB GPU: llama.cpp + MTP speculative decoding gives
+# ~31 tok/s single-stream and a ~0.6-1.2s "none" rejection (the dominant case: ~96% of pages are
+# rejected, a short, prefill-bound reply); MTP cannot batch (concurrency just queues, flat aggregate
+# tok/s, linear latency). Switching to LM Studio's non-MTP continuous batching raised AGGREGATE
+# decode tok/s on a synthetic always-long-output benchmark (1x≈38, 6x≈71 tok/s), but on the real
+# traffic mix this was a regression in actual pages/hour: short prefill-bound "none" replies don't
+# batch nearly as well as long decode-bound ones, so real throughput dropped roughly 8x (measured:
+# ETA went from ~3.5 days to ~10 days) despite the higher raw tok/s. Reverted to MTP, parallel=1.
+# Re-tune only by measuring pages/hour on the real prompt mix, not a single-shape token benchmark.
+parallel = 1
 # Off by default: reasoning models (e.g. Qwen3) otherwise spend the whole token budget on
 # chain-of-thought and return empty content, and extraction wants the answer directly. Sends
 # chat_template_kwargs.enable_thinking=false; servers that don't understand it ignore it. Set
