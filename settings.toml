@@ -1,7 +1,21 @@
 [crawl]
 path = "https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-08/wet.paths.gz"
 root = "https://data.commoncrawl.org/"
-languages = ["eng", "deu", "rus", "jpn", "zho", "spa", "fra", "por", "ita", "pol"]
+# Qwen3-supported languages that Common Crawl (CLD2) can tag via WARC-Identified-Content-Language,
+# ISO 639-3. 87 codes = the Qwen3 (119-language) ∩ CC-detectable intersection — as comprehensive as
+# the crawl's own language detection allows. The keyword bootstrap generates idiomatic trading terms
+# for each of these (in batches), so trading content is findable in every one.
+languages = [
+    "eng", "fra", "por", "deu", "ron", "swe", "dan", "bul", "rus", "ces",
+    "ell", "ukr", "spa", "nld", "slk", "hrv", "pol", "lit", "nob", "nno",
+    "fas", "slv", "guj", "lav", "ita", "oci", "nep", "mar", "bel", "srp",
+    "ltz", "asm", "cym", "snd", "gle", "fao", "hin", "pan", "ben", "ori",
+    "tgk", "yid", "glg", "cat", "isl", "sqi", "afr", "mkd", "sin", "urd",
+    "bos", "hye", "zho", "mya", "ara", "heb", "mlt", "ind", "msa", "tgl",
+    "ceb", "jav", "sun", "war", "tam", "tel", "kan", "mal", "tur", "aze",
+    "uzb", "kaz", "bak", "tat", "tha", "lao", "fin", "est", "hun", "vie",
+    "khm", "jpn", "kor", "kat", "eus", "hat", "swa",
+]
 
 [pipeline]
 capacity = 1000
@@ -31,10 +45,13 @@ path = "/v1/chat/completions"
 model = "google/gemma-4-12b-qat"
 password = ""
 timeout = 180
-# Concurrent LLM extraction calls. The single local model is compute-bound, so >1 just batches
-# prefills and makes each call hit the timeout; keep at 1 for this model. Raise only for a faster
-# or remote multi-slot server.
-parallel = 1
+# Concurrent LLM extraction calls (read by extract() as its worker count). Tuning is hardware-bound:
+# a concurrency sweep on a single 24 GB GPU running a 27B model (VRAM ~95% full, no room for KV-cache
+# batching) showed aggregate throughput FLAT at ~31-33 tok/s from 1 to 8 concurrent, while per-request
+# latency grew linearly (1→21s, 8→178s, near the timeout). So parallelism buys ~nothing here and risks
+# timeouts past ~4. Set 2 for the marginal gain at safe latency; raise only on hardware with spare VRAM
+# for real batching (smaller model, bigger/second GPU, or a multi-GPU server).
+parallel = 2
 # Off by default: reasoning models (e.g. Qwen3) otherwise spend the whole token budget on
 # chain-of-thought and return empty content, and extraction wants the answer directly. Sends
 # chat_template_kwargs.enable_thinking=false; servers that don't understand it ignore it. Set
@@ -45,29 +62,34 @@ thinking = false
 path = "research.md"
 
 [prompts]
-# Extraction prompts are tuned to keep only concrete, programmable strategies: rule-based logic with
-# entry/exit conditions and parameters stated ON THE PAGE, grounded by required pseudo-code. Generic
-# textbook indicator definitions, indicator name lists, one-off stock/ticker calls, and news all map
-# to `none`. The page may be in any language (Qwen handles 200+); output is always English.
-system = "You extract concrete, tradable trading strategies from web pages. A strategy qualifies ONLY if the page itself states actionable, rule-based logic you could program: at least one entry condition, at least one exit condition, and at least one concrete parameter (indicator settings, numeric thresholds, timeframe, stop-loss/target, or position sizing). A one-off stock or ticker recommendation (for example \"buy X, target Y, stop Z\") is NOT a strategy — it must be a reusable system, not a single call. The page may be in ANY language; read it natively and write your ENTIRE answer in English, translating faithfully. Report ONLY what the page states. Do NOT add rules from your own knowledge, do NOT infer or generalize, and do NOT use hedging words such as \"likely\", \"typically\", \"usually\", or \"generally\" — if you would need them, the rule is not on the page. Reply with exactly `none` (lowercase, nothing else) when the page merely names or defines indicators, lists them (menus, glossaries, tag/category pages), gives one-off buy/sell or ticker calls, only discusses markets or news, or is too vague to program as written."
+# Extraction prompts keep only concrete, programmable, AND novel strategies: rule-based logic with
+# entry/exit conditions and parameters stated ON THE PAGE, grounded by required pseudo-code, with a
+# distinctive edge. Generic/textbook strategies (golden cross, RSI 30/70, MACD crossover, Bollinger
+# bounce, basic breakout), indicator definitions/name lists, one-off stock/ticker calls, and news all
+# map to `none`. The page may be in any language; output is always English. The keyword bootstrap
+# generates the idiomatic trading vocabulary actually used in each target language, not literal
+# translations.
+system = "You extract concrete, tradable, and NOVEL trading strategies from web pages. A strategy qualifies ONLY if the page states actionable, rule-based logic you could program — at least one entry condition, at least one exit condition, and at least one concrete parameter (indicator settings, numeric thresholds, timeframe, stop-loss/target, or position sizing) — AND it is novel or non-obvious. If a knowledgeable trader would recognise it as standard textbook technical analysis — a moving-average / golden-cross or death-cross crossover, RSI or stochastic overbought/oversold (e.g. RSI>70 / <30), a basic MACD-line crossover, a plain Bollinger-band bounce, or a simple support/resistance breakout — reply with exactly `none`. Qualify a strategy only when it has a distinctive edge: an unusual signal input, a specific non-obvious multi-condition system, an uncommon indicator combination, or otherwise original rule logic. A one-off stock or ticker recommendation (for example \"buy X, target Y, stop Z\") is NOT a strategy — it must be a reusable system, not a single call. The page may be in ANY language; read it natively and write your ENTIRE answer in English, translating faithfully. Report ONLY what the page states. Do NOT add rules from your own knowledge, do NOT infer or generalize, and do NOT use hedging words such as \"likely\", \"typically\", \"usually\", or \"generally\" — if you would need them, the rule is not on the page. Reply with exactly `none` (lowercase, nothing else) when the strategy is generic or textbook, when the page merely names or defines indicators, lists them (menus, glossaries, tag/category pages), gives one-off buy/sell or ticker calls, only discusses markets or news, or is too vague to program as written."
 input = """
-Extract every concrete, tradable strategy stated on this page. For each strategy output, in English:
+Extract every concrete, tradable, NOVEL strategy stated on this page — skip generic, well-known textbook strategies. For each qualifying strategy output, in English:
 - Name
 - Entry rule(s)
 - Exit rule(s)
 - Concrete parameters (indicator settings, thresholds, timeframe, stop/target, instrument)
+- What makes it novel / non-obvious (its distinctive edge)
 - Pseudo-code implementing EXACTLY the rules on the page (no invented values)
 - Source URL
-The pseudo-code must be grounded strictly in the page; if you cannot write pseudo-code from the stated rules, the strategy does not qualify. If the page provides no concrete, executable strategy, reply with exactly `none`."""
-local_system = "You extract concrete, tradable trading strategies from web pages. A strategy qualifies ONLY if the page itself states actionable, rule-based logic you could program: at least one entry condition, at least one exit condition, and at least one concrete parameter (indicator settings, numeric thresholds, timeframe, stop-loss/target, or position sizing). A one-off stock or ticker recommendation (for example \"buy X, target Y, stop Z\") is NOT a strategy — it must be a reusable system, not a single call. The page may be in ANY language; read it natively and write your ENTIRE answer in English, translating faithfully. Report ONLY what the page states. Do NOT add rules from your own knowledge, do NOT infer or generalize, and do NOT use hedging words such as \"likely\", \"typically\", \"usually\", or \"generally\" — if you would need them, the rule is not on the page. Reply with exactly `none` (lowercase, nothing else) when the page merely names or defines indicators, lists them (menus, glossaries, tag/category pages), gives one-off buy/sell or ticker calls, only discusses markets or news, or is too vague to program as written."
+The pseudo-code must be grounded strictly in the page; if you cannot write pseudo-code from the stated rules, the strategy does not qualify. If the page provides no concrete, executable, non-obvious strategy, reply with exactly `none`."""
+local_system = "You extract concrete, tradable, and NOVEL trading strategies from web pages. A strategy qualifies ONLY if the page states actionable, rule-based logic you could program — at least one entry condition, at least one exit condition, and at least one concrete parameter (indicator settings, numeric thresholds, timeframe, stop-loss/target, or position sizing) — AND it is novel or non-obvious. If a knowledgeable trader would recognise it as standard textbook technical analysis — a moving-average / golden-cross or death-cross crossover, RSI or stochastic overbought/oversold (e.g. RSI>70 / <30), a basic MACD-line crossover, a plain Bollinger-band bounce, or a simple support/resistance breakout — reply with exactly `none`. Qualify a strategy only when it has a distinctive edge: an unusual signal input, a specific non-obvious multi-condition system, an uncommon indicator combination, or otherwise original rule logic. A one-off stock or ticker recommendation (for example \"buy X, target Y, stop Z\") is NOT a strategy — it must be a reusable system, not a single call. The page may be in ANY language; read it natively and write your ENTIRE answer in English, translating faithfully. Report ONLY what the page states. Do NOT add rules from your own knowledge, do NOT infer or generalize, and do NOT use hedging words such as \"likely\", \"typically\", \"usually\", or \"generally\" — if you would need them, the rule is not on the page. Reply with exactly `none` (lowercase, nothing else) when the strategy is generic or textbook, when the page merely names or defines indicators, lists them (menus, glossaries, tag/category pages), gives one-off buy/sell or ticker calls, only discusses markets or news, or is too vague to program as written."
 local_input = """
-Extract every concrete, tradable strategy stated on this page. For each strategy output, in English:
+Extract every concrete, tradable, NOVEL strategy stated on this page — skip generic, well-known textbook strategies. For each qualifying strategy output, in English:
 - Name
 - Entry rule(s)
 - Exit rule(s)
 - Concrete parameters (indicator settings, thresholds, timeframe, stop/target, instrument)
+- What makes it novel / non-obvious (its distinctive edge)
 - Pseudo-code implementing EXACTLY the rules on the page (no invented values)
 - Source URL
-The pseudo-code must be grounded strictly in the page; if you cannot write pseudo-code from the stated rules, the strategy does not qualify. If the page provides no concrete, executable strategy, reply with exactly `none`."""
-keywords_system = "You generate broad, high-recall search keywords for finding pages that describe TRADING STRATEGIES in a multilingual web crawl. These keywords gate a cheap first-pass filter, so optimize for RECALL, not precision: choose the common words and short phrases that appear in almost ANY description of a trading strategy, regardless of which specific indicator it uses. Favor the vocabulary of trading rules and mechanics — for example: trading strategy, trading system, entry, exit, signal, setup, buy signal, sell signal, stop loss, take profit, price target, long position, short position, breakout, pullback, reversal, trend, momentum, support, resistance, backtest, risk management, position size, timeframe, crossover, overbought, oversold. Include only a FEW of the most common indicators (moving average, RSI, MACD); do NOT list many specific, exotic, or named indicators, oscillators, or chart patterns — those are too narrow and miss strategies written in plain language. Output 30 to 40 such concepts. For EACH concept, output its name in English AND its common equivalent in EACH requested target language, each as a SEPARATE array element; never combine multiple terms or languages into one element, and never use commas or slashes inside an element. Keep each element a short keyword phrase. No duplicates, no descriptions, no numbering."
+The pseudo-code must be grounded strictly in the page; if you cannot write pseudo-code from the stated rules, the strategy does not qualify. If the page provides no concrete, executable, non-obvious strategy, reply with exactly `none`."""
+keywords_system = "You generate broad, high-recall search keywords for finding pages that describe TRADING STRATEGIES in a multilingual web crawl. These keywords gate a cheap first-pass filter, so optimize for RECALL, not precision: choose the common words and short phrases that appear in almost ANY description of a trading strategy, regardless of which specific indicator it uses. Favor the vocabulary of trading rules and mechanics — for example: trading strategy, trading system, entry, exit, signal, setup, buy signal, sell signal, stop loss, take profit, price target, long position, short position, breakout, pullback, reversal, trend, momentum, support, resistance, backtest, risk management, position size, timeframe, crossover, overbought, oversold. Include only a FEW of the most common indicators (moving average, RSI, MACD); do NOT list many specific, exotic, or named indicators, oscillators, or chart patterns — those are too narrow and miss strategies written in plain language. Output 30 to 40 such concepts. For EACH concept and EACH requested target language, output the term that traders in THAT language actually use — which may be a native word, a borrowed loanword (often the English term is used as-is, e.g. \"RSI\", \"MACD\", \"breakout\", \"price action\"), or a localized phrase — NOT a literal word-for-word translation. Use the real, idiomatic trading vocabulary of that language's market community (the words that would appear on its trading sites and forums); when a concept genuinely has no established term in a language, use the form traders there would recognise. Output each term as a SEPARATE array element; never combine multiple terms or languages into one element, and never use commas or slashes inside an element. Keep each element a short keyword phrase. No duplicates, no descriptions, no numbering."
 summary_system = "Summarize this text."
