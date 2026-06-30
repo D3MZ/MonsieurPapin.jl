@@ -58,7 +58,12 @@ end
 
 function decode(bytes::AbstractVector{UInt8})
     kept = utf8boundary(bytes, length(bytes))
-    String(bytes[1:kept])
+    s = String(bytes[1:kept])
+    # utf8boundary only fixes the truncation tail; crawled pages also carry interior mojibake and
+    # mixed encodings. A single invalid byte anywhere makes the JSON request body unparseable, so the
+    # LLM server returns 500 — and under load that destabilised the whole run. Drop the malformed
+    # characters (keeping all valid multilingual text) so every string we emit is valid UTF-8.
+    isvalid(s) ? s : sprint(io -> for c in s; isvalid(c) && print(io, c); end)
 end
 
 function text(snippet::Snippet{N}, limit::Int=snippet.length) where {N}

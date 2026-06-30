@@ -127,6 +127,7 @@ function extract(source, settings, system, instruction, render; mode="a",
         # worker pulls a distinct best-available page; the file write is serialized under a lock.
         @sync for _ in 1:workers
             Threads.@spawn for wet in source
+              try   # no single page may abort an 80-hour extraction
                 ts = time()
                 finding = try   # one slow/timed-out page must not abort extraction
                     message(request(; model=settings["llm"]["model"], systemprompt=system,
@@ -135,7 +136,9 @@ function extract(source, settings, system, instruction, render; mode="a",
                         password=settings["llm"]["password"], timeout=settings["llm"]["timeout"],
                         thinking=get(settings["llm"], "thinking", false)))
                 catch err
-                    @warn "extract LLM call failed; skipping page" exception=err
+                    # Log only the error type, never the response body: a 500 echoes the (possibly
+                    # malformed) request back, and rendering invalid bytes in the log is a crash risk.
+                    @warn "extract LLM call failed; skipping page" error=string(typeof(err))
                     ""
                 end
                 p = Threads.atomic_add!(pages, 1) + 1
@@ -151,6 +154,9 @@ function extract(source, settings, system, instruction, render; mode="a",
                                 "informative=$ok rate=$(round(w/max(time()-t0,1)*3600;digits=0))/hr " *
                                 "dist=$(round(wet.score;digits=3)) uri=$(first(uri(wet),70))")
                 flush(stderr)
+              catch err
+                @warn "extract: skipping page after unexpected error" error=string(typeof(err))
+              end
             end
         end
     end
