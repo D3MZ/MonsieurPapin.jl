@@ -233,13 +233,17 @@ function bootstrap(settings)
     # Generate idiomatic keywords for every target language in batches of 6: one big call collapses to
     # a single language / starves later ones, so small batches guarantee full per-language coverage
     # (validated: 6 languages -> ~25 concepts x 6 = ~150 multilingual terms per call). Each call is a
-    # one-time ~6 KB-seed prefill at ~30 tok/s; the grammar's maxItems bounds each call's output.
-    # Aho-Corasick scan cost is independent of keyword count, so the large multilingual set is free.
+    # one-time ~6 KB-seed prefill; the grammar's maxItems bounds each call's output. Aho-Corasick scan
+    # cost is independent of keyword count, so the large multilingual set is free at scan time.
+    # Batches run concurrently (one task per `llm.parallel` slot) so bootstrap uses the server's full
+    # concurrency instead of draining 27+ batches one at a time through an otherwise-idle slot pool.
     if isempty(manual)
-        raw = String[]
-        for batch in Iterators.partition(settings["crawl"]["languages"], 6)
-            append!(raw, extractkeywords(settings, article; limitinput=6_000, timeout=900, langs=collect(batch)))
+        batches = collect(Iterators.partition(settings["crawl"]["languages"], 6))
+        workers = get(settings["llm"], "parallel", 4)
+        tasks = asyncmap(batches; ntasks=workers) do batch
+            extractkeywords(settings, article; limitinput=6_000, timeout=900, langs=collect(batch))
         end
+        raw = reduce(vcat, tasks; init=String[])
     else
         raw = manual
     end
