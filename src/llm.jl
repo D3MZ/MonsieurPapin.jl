@@ -14,14 +14,28 @@ function request(; model::String, systemprompt::String, input::String,
     !isnothing(temperature) && (body["temperature"] = temperature)
     # Thinking is off by default: reasoning models (e.g. Qwen3) otherwise spend the whole token
     # budget on chain-of-thought and return empty content, and the extraction pipeline wants the
-    # answer directly anyway. Servers that don't understand this field ignore it.
-    thinking || (body["chat_template_kwargs"] = Dict("enable_thinking" => false))
+    # answer directly anyway. Send both the nested (llama.cpp) and top-level (LM Studio) forms of
+    # the flag; servers that don't recognize either form simply ignore it. message() additionally
+    # falls back to reasoning_content if content is still empty (observed: LM Studio's engine
+    # ignores this flag under response_format=json_schema regardless of which form is sent).
+    if !thinking
+        body["chat_template_kwargs"] = Dict("enable_thinking" => false)
+        body["enable_thinking"] = false
+    end
     headers = ["Content-Type" => "application/json", "Authorization" => "Bearer $(password)"]
     response = HTTP.post(string(baseurl, path); headers=headers, body=JSON.json(body), readtimeout=timeout)
     return JSON.parse(String(response.body))
 end
 
-message(data) = data["choices"][1]["message"]["content"]
+# Some servers (observed: LM Studio's engine, specifically under response_format=json_schema)
+# route the entire answer into reasoning_content and leave content empty regardless of the
+# enable_thinking flag. Fall back so a structured/reasoning quirk doesn't surface as an empty
+# string (and downstream JSON.parse("") -> UnexpectedEOF, which previously crashed a long run).
+function message(data)
+    msg = data["choices"][1]["message"]
+    content = get(msg, "content", "")
+    isempty(strip(content)) ? get(msg, "reasoning_content", "") : content
+end
 
 # Map the crawl's ISO-639-3 language codes to English names for the keyword prompt, so the target
 # languages stay in sync with [crawl] languages instead of being hardcoded in the prompt text.
