@@ -102,14 +102,22 @@ MonsieurPapin is a fixed-capacity waterfall. Each stage keeps the best candidate
 
 ```mermaid
 flowchart TD
-    A["Common Crawl WET archives (2.1B pages)"] --> B["Stage 1: keyword scoring"]
-    B --> C["Stage 2: deduplication"]
+    A["Common Crawl WET archives (2.1B pages)"] --> L["Language filter<br/>(159 Common-Crawl-detectable languages)"]
+    L --> B["Stage 1: keyword scoring (Aho-Corasick)"]
+    B --> C["Stage 2: deduplication (SimHash)"]
     C --> D["Stage 3: embedding similarity"]
-    D --> E["Stage 4: LLM extraction"]
+    D --> E["Stage 4: LLM extraction<br/>(concrete, novel strategies only)"]
     E --> F["research.md"]
 
-    G["Bootstrap from seed URLs"] --> B
-    G --> D
+    subgraph BOOT["Bootstrap: per-language keyword filter (one-time, cached)"]
+      S["Seed URLs"] --> KF["Keyword filter<br/>(per language)"]
+      MK["manual_keywords<br/>config override (verbatim)"] --> KF
+      KC["keyword_cache.json<br/>reused on rerun, hand-editable"] --> KF
+      KF -.->|languages missing from both| GEN["LLM: one call per language<br/>(Channel, parallel workers)"]
+      GEN --> KC
+    end
+    KF --> B
+    KF --> D
 ```
 
-**Key principles**: bounded priority queues evict the lowest-ranked candidate when full; expensive stages process the best survivors from the previous stage; near-duplicates within a SimHash window are dropped from the keyword shortlist before the expensive embedding and extraction stages.
+**Key principles**: bounded priority queues evict the lowest-ranked candidate when full; expensive stages process the best survivors from the previous stage; near-duplicates within a SimHash window are dropped from the keyword shortlist before the expensive embedding and extraction stages. The **keyword filter is built per language** from three sources in priority order — a `manual_keywords` config override (used verbatim), a `keyword_cache.json` of previously-generated terms (so reruns skip the build and the file can be hand-edited), and otherwise one LLM call per language fanned out over a Channel (worker count = `llm.parallel`); the assembled vocabulary feeds both the keyword matcher and the embedding query.
