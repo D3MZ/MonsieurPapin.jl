@@ -1101,7 +1101,6 @@ dependencies = [
 name = "model2vec_rs_worker"
 version = "0.1.0"
 dependencies = [
- "aho-corasick",
  "anyhow",
  "half",
  "hf-hub",
