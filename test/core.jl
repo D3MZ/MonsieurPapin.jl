@@ -18,7 +18,9 @@ entryrecord(content; language="eng", uri="https://example.com") =
     @test settings["embedding"]["model"] == "minishlab/potion-multilingual-128M"
     @test settings["llm"]["path"] == "/v1/chat/completions"
     @test settings["output"]["path"] == "research.md"
-    @test settings["crawl"]["languages"] == ["eng", "deu", "rus", "jpn", "zho", "spa", "fra", "por", "ita", "pol"]
+    langs = settings["crawl"]["languages"]
+    @test langs isa AbstractVector && length(langs) == length(unique(langs)) && length(langs) > 100
+    @test issubset(["eng", "deu", "rus", "jpn", "zho", "spa", "fra", "por", "ita", "pol"], langs)
 
     path = tempname() * ".gz"
     open(path, "w") do file
