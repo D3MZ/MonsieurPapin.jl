@@ -30,7 +30,7 @@ Complexity columns use **N** = pages streamed, **L** = content bytes per page (c
 | WET record parsing | 23,500 records/s | 20,200 records/s | 0/record steady (4 setup) | O(N·L) | O(N·L / P) |
 | Aho-Corasick keyword scoring (native Julia) | 23,300 records/s | 18,700 records/s ✱ | 4/record ✦ | O(N·L) ‡ | O(N·L / P) ‡ |
 | SimHash deduplication | 7,300 records/s | 9,100 records/s | 0/record | O(N·L) | O(N·L / P) |
-| Model2Vec embedding scoring | ~700 records/s | ~310 records/s | 7/record | O(N·L) | O(N·L / P) |
+| Model2Vec embedding scoring (native Julia) | ~1,500 records/s | not yet remeasured ✲ | ~10.5/record ✦✦ | O(N·L) | O(N·L / P) |
 | Queue insert (top 1K) | 23,000 records/s | 19,200 records/s | 0/record steady | O(N·log C) | O(N·log C) † |
 | Queue pop! extraction | 925,000 pops/s | 583,000 pops/s | 1/pop | O(C·log C) | O(C·log C) † |
 | LLM extraction | ~0.1 pages/s | — | — | O(C) | O(C) † |
@@ -41,9 +41,15 @@ The four streaming stages are embarrassingly parallel per record (`O(N·L / P)`)
 
 Keyword scoring runs on [**AhoCorasickILP.jl**](https://github.com/D3MZ/AhoCorasickILP.jl) — a native-Julia, allocation-free Aho-Corasick matcher — replacing the previous Rust `aho-corasick` FFI. On the raw match kernel over this dataset it is **3.44× faster than the Rust crate (50.3 ms vs 173.2 ms, identical counts, 0 vs 39,398 allocations)**; end-to-end the scoring stage is streaming-bound, so the full-pipeline throughput above rises a more modest ~1.23× and the stage is now nearly as fast as raw WET parsing. The speedup comes from a byte-class/premultiplied DFA plus a single-thread multi-stream ILP kernel (interleaved independent DFA chains that hide the dependent-load latency — not multithreading).
 
+Embedding scoring runs on [**Model2Vec.jl**](https://github.com/D3MZ/Model2Vec.jl) — a native-Julia model2vec tokenizer + pooler (WordPiece and Unigram/SentencePiece) — replacing the previous in-process Rust FFI bridge (`RustWorker.jl` / `deps/model2vec_rs_worker`, no longer required to build the project). Head-to-head over this same dataset (`potion-multilingual-128M`, Unigram tokenizer, see [test/benchmarks.jl](test/benchmarks.jl)'s "Model2Vec head-to-head" test) it is **2.4–2.6× faster than the Rust FFI bridge it replaced, with 0.998 score correlation**. Unlike the Aho-Corasick swap, this one isn't allocation-free: the Unigram backend approximates SentencePiece's `Precompiled` charsmap normalizer with `Unicode.normalize`, which allocates — an honest, documented tradeoff (see [Model2Vec.jl's README](https://github.com/D3MZ/Model2Vec.jl#scope)) rather than a regression, and it's still both faster and lower-allocation than the FFI path it replaced.
+
 `✱` Core i7-7567U figure for this row is **extrapolated, not measured**: that machine is mid-crawl and unavailable, so its prior 15,200 records/s is scaled by the M1 Max full-pipeline speedup from this change (×1.23). To be replaced with a measured value.
 
 `✦` The matcher itself is now **allocation-free** (0 allocs, versus 3 per call for the former Rust FFI); the 4/record here is amortized WET-stream setup, not keyword matching.
+
+`✲` Core i7-7567U is mid-crawl and unavailable; unlike the Aho-Corasick row above, this figure isn't extrapolated from a prior measurement since the backend changed entirely (Rust FFI → native Julia) — there's no comparable prior native-Julia number on that machine to scale from.
+
+`✦✦` Not allocation-free, unlike the Aho-Corasick swap: the Unigram tokenizer's charsmap-normalization approximation allocates (see the paragraph below). Still fewer allocations and faster than the Rust FFI bridge it replaced (which reported 7/record from Julia's side — the Rust-internal heap was invisible to Julia's allocation counter, so that number understated Rust's true cost).
 
 `‡` Aho-Corasick keyword scoring is **independent of the keyword count K**: the automaton makes one state transition per input byte whether it holds 50 keywords or 50,000, so scan throughput does not change as the keyword set grows. The `O(N·L)` cost above already includes matching every keyword at once. Adding keywords costs only a one-time `O(M)` automaton build at startup and proportional automaton memory — never scan time. (`N·L` itself is the upper bound; the waterfall only ever scans the pages the earlier stages admit.)
 
@@ -56,15 +62,14 @@ See [test/benchmarks.jl](test/benchmarks.jl) for how to reproduce these numbers.
 ### Prerequisites
 
 - [Julia 1.12+](https://julialang.org/downloads/)
-- Rust toolchain
 - A local OpenAI-compatible chat server, such as [LM Studio](https://lmstudio.ai/)
 - About 200 MB of disk space for the embedding model, downloaded on first run
 
-Install Rust if needed:
-
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
+A Rust toolchain is **not** required to run a crawl — keyword and embedding scoring both run
+on native Julia ([AhoCorasickILP.jl](https://github.com/D3MZ/AhoCorasickILP.jl),
+[Model2Vec.jl](https://github.com/D3MZ/Model2Vec.jl)). It's only needed to reproduce the Rust-FFI
+comparison in [test/benchmarks.jl](test/benchmarks.jl)'s head-to-head tests — see
+`deps/model2vec_rs_worker`.
 
 Load a local chat model in your OpenAI-compatible server, for example `qwen/qwen3.6-27b`, and start it on port `1234`.
 
@@ -73,8 +78,6 @@ Load a local chat model in your OpenAI-compatible server, for example `qwen/qwen
 ```bash
 git clone https://github.com/D3MZ/MonsieurPapin.jl
 cd MonsieurPapin.jl
-
-cargo build --release --manifest-path deps/model2vec_rs_worker/Cargo.toml
 
 julia --project example.jl
 ```
