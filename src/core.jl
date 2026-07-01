@@ -90,8 +90,10 @@ function select(query::Embedding, source; capacity, batchsize=64, workers=max(1,
 end
 
 function embed!(shortlist::BoundedPriorityQueue{T}, query::Embedding, source, batchsize) where {T}
+    handle!(query) # load query.model once before spawning; each worker gets its own scratch below
+    scratch = _M2V.Scratch(query.model) # one per worker task -- see score!'s explicit-scratch note
     batch, scores, pointers, lengths = T[], Float64[], UInt[], UInt[]
-    flush!() = (score!(scores, pointers, lengths, query, batch);
+    flush!() = (score!(scores, pointers, lengths, query, batch, scratch);
                 foreach(i -> put!(shortlist, rescore(batch[i], scores[i])), eachindex(batch));
                 empty!(batch))
     for wet in source

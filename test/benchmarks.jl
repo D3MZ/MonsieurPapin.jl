@@ -225,6 +225,74 @@ end
         @test records_per_second >= 400
     end
 
+    @testset "Model2Vec head-to-head: native Julia (Model2Vec.jl) vs Rust FFI" begin
+        # Proves the native-Julia embedder (src/scoring.jl's `Embedding`, backed by Model2Vec.jl)
+        # correlates closely with the Rust FFI bridge's distances and beats it on speed, over the
+        # same real WET record content and query. Multilingual/CJK records can diverge more
+        # (Model2Vec.jl's Unigram backend approximates SentencePiece's charsmap normalizer rather
+        # than implementing it byte-for-byte -- see Model2Vec.jl's README for the measured gap),
+        # so the tolerance is loose (records must correlate, not match to float precision) and the
+        # speed assertion is on aggregate throughput, not per-record exact equality. This result is
+        # why `Embedding` now uses Model2Vec.jl instead of RustWorker (see scoring.jl); the Rust
+        # side below therefore runs only if the former FFI model2vec path is still present in the
+        # worker, and is skipped once it has been refactored out -- mirroring the Aho-Corasick
+        # head-to-head test above, which already went through this same transition.
+        records = collect(wets(wetspath))
+
+        # native Julia embedder (production path through src/scoring.jl)
+        native = embedding("cat dog"; vecpath=model_source)
+        nativedistance(wet) = distance(native, wet)
+
+        # The Rust model2vec bridge only exists if it has not yet been removed from the worker.
+        MonsieurPapin.RustWorker.load()
+        rusthandle = try
+            MonsieurPapin.RustWorker.open(model_source, "cat dog")
+        catch
+            nothing
+        end
+
+        nativebenchmark = @benchmark sum($nativedistance, $records) samples=1 evals=1 seconds=30
+        display(nativebenchmark)
+        nativetime = median(nativebenchmark).time / 1e9
+        nativerate = round(length(records) / nativetime)
+        nativeallocsperrecord = nativebenchmark.allocs / length(records)
+
+        if rusthandle === nothing
+            @info "Model2Vec head-to-head (Rust bridge removed; native only)" records = length(records) nativerate = nativerate nativeallocsperrecord = nativeallocsperrecord
+            @test nativeallocsperrecord <= 20 # ~10.5 measured (Unicode.normalize approximation + rare invalid-UTF-8 fallback)
+            @test nativerate >= 400
+        else
+            # Zero-copy, matching what `distance(::Embedding, ::WET)` used before this refactor —
+            # generous to Rust (no content() allocation on this side of the comparison).
+            rustscores1, rustpointers, rustlengths = Float64[0.0], UInt[0], UInt[0]
+            function rustdistance(wet::WET{U,C,L}) where {U,C,L}
+                reference = Ref(wet)
+                GC.@preserve reference rustpointers rustlengths rustscores1 begin
+                    ptr = Base.unsafe_convert(Ptr{WET{U,C,L}}, reference) + MonsieurPapin.contentoffset(WET{U,C,L})
+                    rustpointers[1] = UInt(ptr)
+                    rustlengths[1] = MonsieurPapin.utf8boundary(Ptr{UInt8}(ptr), wet.content.length)
+                    MonsieurPapin.RustWorker.score!(rustscores1, rustpointers, rustlengths, rusthandle)
+                end
+                first(rustscores1)
+            end
+            rustbenchmark = @benchmark sum($rustdistance, $records) samples=1 evals=1 seconds=30
+            display(rustbenchmark)
+            rusttime = median(rustbenchmark).time / 1e9
+            rustrate = round(length(records) / rusttime)
+
+            # Sanity check: the two backends should be scoring the same underlying relevance
+            # signal, not literally the same encoder -- correlated, not identical, distances.
+            nativescores = [distance(native, wet) for wet in records]
+            rustscores = [rustdistance(wet) for wet in records]
+            correlation = cor(nativescores, rustscores)
+
+            speedup = round(rusttime / nativetime; digits=2)
+            @info "Model2Vec head-to-head" records = length(records) nativerate = nativerate rustrate = rustrate speedup = speedup correlation = correlation nativeallocsperrecord = nativeallocsperrecord rustallocs = rustbenchmark.allocs
+            @test correlation >= 0.9
+            @test nativetime <= rusttime
+        end
+    end
+
     @testset "select embedding filtering (channel-based, batch-parallel)" begin
         source = embedding("cat dog"; vecpath=model_source)
         benchmark = @benchmark sum(_ -> 1, select($source, wets($wetspath); capacity=1_000)) samples=1 seconds=5
@@ -234,7 +302,12 @@ end
         records_per_second = round(records / time)
         @info "Benchmarking select embedding (records)" records records_per_second allocations = benchmark.allocs
         @test records_per_second >= 400
-        @test benchmark.allocs <= 10 * records
+        # ~17.5 measured (Model2Vec.jl's Unigram backend's charsmap approximation allocates ~10.5
+        # per record on its own -- see the Model2Vec head-to-head test above -- plus per-batch
+        # queue/task bookkeeping in select/embed!). Raised from the old Rust-FFI-path bound of
+        # 10x when Embedding switched backends (see scoring.jl); this is an honest, documented
+        # tradeoff, not a regression to chase back down.
+        @test benchmark.allocs <= 20 * records
     end
 
     @testset "Queuing the top 1K" begin

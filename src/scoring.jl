@@ -1,18 +1,59 @@
+# Embedding scoring, backed by the native-Julia Model2Vec.jl package
+# (https://github.com/D3MZ/Model2Vec.jl). This replaces the former Rust FFI path (RustWorker.jl
+# -> deps/model2vec_rs_worker): it is faster and (for WordPiece models) allocation-free — see
+# test/benchmarks.jl's "Model2Vec head-to-head" test, which is what justified the switch and now
+# guards against regression. The Rust worker binary itself is left in place (used only by that
+# test's direct comparison, not by production code), mirroring how src/ahocorasick.jl already
+# stopped calling into Rust while the shared worker stuck around for the AC head-to-head test.
+import Model2Vec
+const _M2V = Model2Vec
+
 mutable struct Embedding
     text::String
     vecpath::String
-    handle::Union{Nothing,RustWorker.Model}
+    model::Union{Nothing,_M2V.StaticModel}
+    scratch::Any # concrete Model2Vec.Scratch subtype, set alongside `model`
+    queryvec::Union{Nothing,Vector{Float32}}
     lock::ReentrantLock
 end
 
+# `Model2Vec.load` only reads local model2vec snapshot directories (no HF download) -- resolve a
+# "org/repo" vecpath to its already-cached local snapshot, erroring clearly rather than silently
+# falling back to a network fetch.
+function hubsnapshot(repo::AbstractString)
+    base = joinpath(homedir(), ".cache", "huggingface", "hub", "models--" * replace(repo, "/" => "--"), "snapshots")
+    isdir(base) || error("scoring.jl: $repo not found in local HF cache ($base); download it first")
+    snaps = readdir(base)
+    isempty(snaps) && error("scoring.jl: $repo's snapshot directory is empty ($base)")
+    joinpath(base, first(snaps))
+end
+
 # The model (and its query encoding) is loaded once, lazily, on first scoring — so a stage that
-# receives no candidates never touches the network. Double-checked locking keeps it thread-safe.
+# receives no candidates never touches disk. Double-checked locking keeps it thread-safe.
 function handle!(source::Embedding)
-    isnothing(source.handle) || return source.handle
+    isnothing(source.model) || return source
     lock(source.lock) do
-        isnothing(source.handle) && (source.handle = RustWorker.open(source.vecpath, source.text))
-        source.handle
+        if isnothing(source.model)
+            model = _M2V.load(hubsnapshot(source.vecpath))
+            # cosinedistance below assumes unit-norm embeddings (dot product == cosine similarity)
+            model.normalize || error("scoring.jl: $(source.vecpath) has normalize=false; cosinedistance's dot-product shortcut requires unit-norm embeddings")
+            scratch = _M2V.Scratch(model)
+            source.model = model
+            source.scratch = scratch
+            source.queryvec = copy(_M2V.encode!(scratch, model, source.text))
+        end
     end
+    source
+end
+
+@inline function cosinedistance(query::Vector{Float32}, candidate::AbstractVector{Float32})
+    dot = 0.0
+    @inbounds for k in eachindex(query, candidate)
+        dot += Float64(query[k]) * Float64(candidate[k])
+    end
+    # Embeddings are L2-normalized by model2vec (config normalize=true, asserted in handle!), so
+    # ||query||=||candidate||=1 and the dot product alone is the cosine similarity.
+    1.0 - dot
 end
 
 function contentoffset(::Type{WET{U,C,L}}) where {U,C,L}
@@ -37,26 +78,38 @@ function utf8boundary(ptr::Ptr{UInt8}, len::Integer)
     len - start + 1 < needed ? start - 1 : len
 end
 
-embedding(text::AbstractString; vecpath="minishlab/potion-multilingual-128M") = Embedding(String(text), String(vecpath), nothing, ReentrantLock())
+embedding(text::AbstractString; vecpath="minishlab/potion-multilingual-128M") = Embedding(String(text), String(vecpath), nothing, nothing, nothing, ReentrantLock())
 embedding(uri::URI; vecpath="minishlab/potion-multilingual-128M") = embedding(plaintext(uri); vecpath)
 
-distance(first::Embedding, second::AbstractString) = RustWorker.score(second, handle!(first))
+function distance(first::Embedding, second::AbstractString)
+    handle!(first)
+    v = _M2V.encode!(first.scratch, first.model, second)
+    cosinedistance(first.queryvec, v)
+end
 distance(first::Embedding, second::Embedding) = distance(first, second.text)
 
+# Zero-copy: builds a StringView directly over the WET's inline content bytes (no String
+# materialized) in the common case. `utf8boundary` only fixes the truncation tail; crawled WET
+# content can still carry interior invalid UTF-8 (mojibake/mixed encodings — see wets.jl's
+# `decode`), which the Unigram backend's Unicode.normalize call cannot tolerate, so fall back to
+# the sanitized, allocating `content(wet)` for the rare record where that matters.
 function distance(source::Embedding, wet::WET{U,C,L}) where {U,C,L}
-    scores = Float64[0.0]
-    pointers = UInt[0]
-    lengths = UInt[0]
+    handle!(source)
     reference = Ref(wet)
-
-    GC.@preserve reference pointers lengths scores begin
-        ptr = Base.unsafe_convert(Ptr{WET{U,C,L}}, reference) + contentoffset(WET{U,C,L})
-        pointers[firstindex(pointers)] = UInt(ptr)
-        lengths[firstindex(lengths)] = utf8boundary(Ptr{UInt8}(ptr), wet.content.length)
-        RustWorker.score!(scores, pointers, lengths, handle!(source))
+    result = GC.@preserve reference begin
+        ptr = Ptr{UInt8}(Base.unsafe_convert(Ptr{WET{U,C,L}}, reference) + contentoffset(WET{U,C,L}))
+        len = utf8boundary(ptr, wet.content.length)
+        text = StringViews.StringView(unsafe_wrap(Vector{UInt8}, ptr, len))
+        if isvalid(text)
+            v = _M2V.encode!(source.scratch, source.model, text)
+            cosinedistance(source.queryvec, v)
+        else
+            nothing
+        end
     end
-
-    first(scores)
+    result === nothing || return result
+    v = _M2V.encode!(source.scratch, source.model, content(wet))
+    cosinedistance(source.queryvec, v)
 end
 
 score(source::Embedding, wet::WET) = rescore(wet, distance(source, wet))
@@ -91,22 +144,36 @@ function score(entry::AC, wet::WET{U,C,L}, scratch::Base.RefValue{WET{U,C,L}}) w
 end
 score(entry::AC, wet::WET{U,C,L}) where {U,C,L} = score(entry, wet, Ref{WET{U,C,L}}())
 
-function score!(scores, pointers, lengths, source::Embedding, batch::AbstractVector{T}) where {T<:WET}
+# `scratch` is explicit (not `source.scratch`) because `Model2Vec.Scratch` is a mutable buffer
+# meant for sequential reuse by one caller — concurrent callers (e.g. `select`/`embed!` in
+# core.jl, which spawns several worker tasks against one shared `Embedding`) must each pass their
+# own scratch, or they'll race on the same buffer. `handle!(source)` still loads `source.model`
+# once (read-only after that, safe to share).
+function score!(scores, pointers, lengths, source::Embedding, batch::AbstractVector{T}, scratch) where {T<:WET}
+    handle!(source)
     resize!(scores, length(batch))
-    resize!(pointers, length(batch))
+    resize!(pointers, length(batch)) # unused by the native path; kept so callers don't need to change
     resize!(lengths, length(batch))
 
-    # WETs are isbits, so the batch stores them inline — point straight at each one, no per-element box.
-    GC.@preserve batch pointers lengths scores begin
-        foreach(eachindex(batch)) do i
+    GC.@preserve batch begin
+        @inbounds for i in eachindex(batch, scores)
             ptr = Ptr{UInt8}(pointer(batch, i) + contentoffset(T))
-            pointers[i] = UInt(ptr)
-            lengths[i] = utf8boundary(ptr, batch[i].content.length)
+            len = utf8boundary(ptr, batch[i].content.length)
+            text = StringViews.StringView(unsafe_wrap(Vector{UInt8}, ptr, len))
+            scores[i] = if isvalid(text)
+                v = _M2V.encode!(scratch, source.model, text)
+                cosinedistance(source.queryvec, v)
+            else
+                v = _M2V.encode!(scratch, source.model, content(batch[i]))
+                cosinedistance(source.queryvec, v)
+            end
         end
-
-        RustWorker.score!(scores, pointers, lengths, handle!(source))
     end
 
     scores
 end
 
+# Convenience overload for single-threaded callers: uses `source`'s own scratch (safe as long as
+# `source` isn't shared across concurrent tasks — see the explicit-scratch method above).
+score!(scores, pointers, lengths, source::Embedding, batch::AbstractVector{<:WET}) =
+    (handle!(source); score!(scores, pointers, lengths, source, batch, source.scratch))
