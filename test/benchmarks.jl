@@ -108,8 +108,8 @@ end
         @test records_per_second >= 20_000
     end
 
-    @testset "Aho-Corasick head-to-head: native Julia (FastAhoCorasick) vs Rust crate" begin
-        # Proves the native-Julia matcher (src/ahocorasick.jl, backed by FastAhoCorasick.jl) matches
+    @testset "Aho-Corasick head-to-head: native Julia (AhoCorasickILP) vs Rust crate" begin
+        # Proves the native-Julia matcher (src/ahocorasick.jl, backed by AhoCorasickILP.jl) matches
         # the Rust crate's counts exactly and beats it on speed and allocations, over the same real
         # WET record text and keywords (leftmost non-overlapping, ASCII case-insensitive). Measured
         # on 21,465 records (~5 KB avg), Apple M1 Max: native 50.3 ms / 0 allocs vs Rust 173.2 ms /

@@ -1,13 +1,13 @@
-# Keyword matching over WET content, backed by the native-Julia FastAhoCorasick package
-# (https://github.com/D3MZ/FastAhoCorasick.jl). This replaces the former Rust `aho-corasick`
+# Keyword matching over WET content, backed by the native-Julia AhoCorasickILP package
+# (https://github.com/D3MZ/AhoCorasickILP.jl). This replaces the former Rust `aho-corasick`
 # FFI path: it is allocation-free in the match loop and, via single-thread multi-stream ILP,
 # several times faster than the Rust crate on this workload (see test/benchmarks.jl).
 #
 # `AC{UInt32}` counts non-overlapping keyword matches; `AC{Float64}` sums per-keyword weights.
 # Semantics match the previous Rust implementation: leftmost non-overlapping matches over raw
 # UTF-8 bytes, ASCII case-insensitive.
-import FastAhoCorasick
-const _FAC = FastAhoCorasick
+import AhoCorasickILP
+const _FAC = AhoCorasickILP
 
 # Number of interleaved DFA streams for the ILP kernel. WET content is capped at `contentlimit`
 # (12 KB), comfortably above the fallback threshold, so 8 streams apply on real records.
