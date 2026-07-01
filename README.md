@@ -28,7 +28,7 @@ Complexity columns use **N** = pages streamed, **L** = content bytes per page (c
 | Stage | M1 Max | Core i7-7567U | Heap allocs | Big-O serial | Big-O parallel |
 | --- | --- | --- | --- | --- | --- |
 | WET record parsing | 23,500 records/s | 20,200 records/s | 0/record steady (4 setup) | O(N·L) | O(N·L / P) |
-| Aho-Corasick keyword scoring | 19,000 records/s | 15,200 records/s | 7/record | O(N·L) ‡ | O(N·L / P) ‡ |
+| Aho-Corasick keyword scoring (native Julia) | 23,300 records/s | 18,700 records/s ✱ | 4/record ✦ | O(N·L) ‡ | O(N·L / P) ‡ |
 | SimHash deduplication | 7,300 records/s | 9,100 records/s | 0/record | O(N·L) | O(N·L / P) |
 | Model2Vec embedding scoring | ~700 records/s | ~310 records/s | 7/record | O(N·L) | O(N·L / P) |
 | Queue insert (top 1K) | 23,000 records/s | 19,200 records/s | 0/record steady | O(N·log C) | O(N·log C) † |
@@ -38,6 +38,12 @@ Complexity columns use **N** = pages streamed, **L** = content bytes per page (c
 As a waterfall, each stage only processes the top candidates from the previous stage — the pipeline doesn't need to run every page through every stage.
 
 The four streaming stages are embarrassingly parallel per record (`O(N·L / P)`); `†` marks stages that stay serial — the queue mutates under a single lock and the LLM stage drains single-consumer (multiple consumers is a TODO), so it's the scoring that feeds them that parallelizes. These parallel bounds hold in practice on 8 threads: deduplication **7.2×** (9,900 → 71,900 records/s, near-linear since only the seen-set check is locked) and multi-file parsing **3.6×** (24,900 → 90,300 records/s, bounded by bandwidth as workers overlap per-file I/O and decompression).
+
+Keyword scoring runs on [**FastAhoCorasick.jl**](https://github.com/D3MZ/FastAhoCorasick.jl) — a native-Julia, allocation-free Aho-Corasick matcher — replacing the previous Rust `aho-corasick` FFI. On the raw match kernel over this dataset it is **3.44× faster than the Rust crate (50.3 ms vs 173.2 ms, identical counts, 0 vs 39,398 allocations)**; end-to-end the scoring stage is streaming-bound, so the full-pipeline throughput above rises a more modest ~1.23× and the stage is now nearly as fast as raw WET parsing. The speedup comes from a byte-class/premultiplied DFA plus a single-thread multi-stream ILP kernel (interleaved independent DFA chains that hide the dependent-load latency — not multithreading).
+
+`✱` Core i7-7567U figure for this row is **extrapolated, not measured**: that machine is mid-crawl and unavailable, so its prior 15,200 records/s is scaled by the M1 Max full-pipeline speedup from this change (×1.23). To be replaced with a measured value.
+
+`✦` The matcher itself is now **allocation-free** (0 allocs, versus 3 per call for the former Rust FFI); the 4/record here is amortized WET-stream setup, not keyword matching.
 
 `‡` Aho-Corasick keyword scoring is **independent of the keyword count K**: the automaton makes one state transition per input byte whether it holds 50 keywords or 50,000, so scan throughput does not change as the keyword set grows. The `O(N·L)` cost above already includes matching every keyword at once. Adding keywords costs only a one-time `O(M)` automaton build at startup and proportional automaton memory — never scan time. (`N·L` itself is the upper bound; the waterfall only ever scans the pages the earlier stages admit.)
 
@@ -103,7 +109,7 @@ MonsieurPapin is a fixed-capacity waterfall. Each stage keeps the best candidate
 ```mermaid
 flowchart TD
     A["Common Crawl WET archives (2.1B pages)"] --> L["Language filter<br/>(159 Common-Crawl-detectable languages)"]
-    L --> B["Stage 1: keyword scoring (Aho-Corasick)"]
+    L --> B["Stage 1: keyword scoring<br/>(native-Julia Aho-Corasick, allocation-free)"]
     B --> C["Stage 2: deduplication (SimHash)"]
     C --> D["Stage 3: embedding similarity"]
     D --> E["Stage 4: LLM extraction<br/>(concrete, novel strategies only)"]
