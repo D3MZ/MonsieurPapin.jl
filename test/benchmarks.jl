@@ -228,10 +228,10 @@ end
     @testset "Model2Vec head-to-head: native Julia (Model2Vec.jl) vs Rust FFI" begin
         # Proves the native-Julia embedder (src/scoring.jl's `Embedding`, backed by Model2Vec.jl)
         # correlates closely with the Rust FFI bridge's distances and beats it on speed, over the
-        # same real WET record content and query. Multilingual/CJK records can diverge more
-        # (Model2Vec.jl's Unigram backend approximates SentencePiece's charsmap normalizer rather
-        # than implementing it byte-for-byte -- see Model2Vec.jl's README for the measured gap),
-        # so the tolerance is loose (records must correlate, not match to float precision) and the
+        # same real WET record content and query. Model2Vec.jl's Unigram backend now implements
+        # SentencePiece's Precompiled charsmap normalizer byte-for-byte, but the two backends are
+        # still separate encoders over messy crawled text, so the tolerance stays loose (records
+        # must correlate, not match to float precision) and the
         # speed assertion is on aggregate throughput, not per-record exact equality. This result is
         # why `Embedding` now uses Model2Vec.jl instead of RustWorker (see scoring.jl); the Rust
         # side below therefore runs only if the former FFI model2vec path is still present in the
@@ -259,7 +259,7 @@ end
 
         if rusthandle === nothing
             @info "Model2Vec head-to-head (Rust bridge removed; native only)" records = length(records) nativerate = nativerate nativeallocsperrecord = nativeallocsperrecord
-            @test nativeallocsperrecord <= 20 # ~10.5 measured (Unicode.normalize approximation + rare invalid-UTF-8 fallback)
+            @test nativeallocsperrecord <= 20 # ~3.25 measured (StringView wrapper + ~4.8% invalid-UTF-8 sanitized-copy fallback; encode itself is 0-alloc)
             @test nativerate >= 400
         else
             # Zero-copy, matching what `distance(::Embedding, ::WET)` used before this refactor —
@@ -302,11 +302,9 @@ end
         records_per_second = round(records / time)
         @info "Benchmarking select embedding (records)" records records_per_second allocations = benchmark.allocs
         @test records_per_second >= 400
-        # ~17.5 measured (Model2Vec.jl's Unigram backend's charsmap approximation allocates ~10.5
-        # per record on its own -- see the Model2Vec head-to-head test above -- plus per-batch
-        # queue/task bookkeeping in select/embed!). Raised from the old Rust-FFI-path bound of
-        # 10x when Embedding switched backends (see scoring.jl); this is an honest, documented
-        # tradeoff, not a regression to chase back down.
+        # ~3.25/record from the WET wrapper (StringView + ~4.8% invalid-UTF-8 sanitized-copy
+        # fallback -- see the Model2Vec head-to-head test above; encode itself is 0-alloc), plus
+        # per-batch queue/task bookkeeping in select/embed!.
         @test benchmark.allocs <= 20 * records
     end
 
