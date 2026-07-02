@@ -5,7 +5,7 @@ end
 
 function Snippet(bytes::AbstractVector{UInt8}, start, stop, ::Val{N}) where {N}
     len = min(N, max(stop - start + 1, 0))
-    len == 0 && return Snippet{N}((ntuple(i -> zero(UInt8), N)), 0)
+    len == 0 && return Snippet{N}(ntuple(i -> zero(UInt8), Val(N)), 0)
 
     tuple = Ref{NTuple{N,UInt8}}()
     ptr = Base.unsafe_convert(Ptr{UInt8}, tuple)

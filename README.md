@@ -27,12 +27,12 @@ Complexity columns use **N** = pages streamed, **L** = content bytes per page (c
 
 | Stage | M1 Max | Core i7-7567U | Heap allocs added | Big-O serial | Big-O parallel |
 | --- | --- | --- | --- | --- | --- |
-| WET record parsing | 23,500 records/s | 20,200 records/s | 4/record ✦ | O(N·L) | O(N·L / P) |
-| Aho-Corasick keyword scoring (native Julia) | 23,300 records/s | 18,700 records/s ✱ | 0/record | O(N·L) ‡ | O(N·L / P) ‡ |
-| SimHash deduplication | 7,300 records/s | 9,100 records/s | 0/record | O(N·L) | O(N·L / P) |
-| Model2Vec embedding scoring (native Julia) | ~5,365 records/s | — | ~3.25/record ✧ | O(N·L) | O(N·L / P) |
-| Queue insert (top 1K) | 23,000 records/s | 19,200 records/s | 0/record steady | O(N·log C) | O(N·log C) † |
-| Queue pop! extraction | 925,000 pops/s | 583,000 pops/s | 1/pop | O(C·log C) | O(C·log C) † |
+| WET record parsing | 27,400 records/s | 20,200 records/s | 0/record ✦ | O(N·L) | O(N·L / P) |
+| Aho-Corasick keyword scoring (native Julia) | 25,600 records/s | 18,700 records/s ✱ | 0/record ✦ | O(N·L) ‡ | O(N·L / P) ‡ |
+| SimHash deduplication | 7,400 records/s | 9,100 records/s | 0/record | O(N·L) | O(N·L / P) |
+| Model2Vec embedding scoring (native Julia) | ~5,360 records/s | — | ~3.25/record ✧ | O(N·L) | O(N·L / P) |
+| Queue insert (top 1K) | 27,400 records/s | 19,200 records/s | 0/record steady | O(N·log C) | O(N·log C) † |
+| Queue pop! extraction | 811,000 pops/s | 583,000 pops/s | 1/pop | O(C·log C) | O(C·log C) † |
 | LLM extraction | ~0.1 pages/s | — | — | O(C) | O(C) † |
 
 Waterfall: each stage only sees the top candidates from the previous stage.
@@ -51,7 +51,7 @@ Native-Julia kernels vs Rust, same dataset:
 
 `✱` Extrapolated (machine mid-crawl): prior 15,200 records/s × 1.23 pipeline speedup.
 
-`✦` Stream iteration cost (~430 bytes/record), paid once here; downstream rows show only what the stage adds on top.
+`✦` ~60 one-time stream-setup allocations total; 0/record steady over all 21,465 records.
 
 `✧` Not the encoder (Model2Vec.jl's encode is 0-alloc): 2/record zero-copy `StringView` in this repo's WET wrapper + ~1.25/record amortized invalid-UTF-8 sanitized-copy fallback (~4.8% of records).
 
