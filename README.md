@@ -25,10 +25,10 @@ Measured with Julia 1.12 on a 21,465-page WET sample from the February 2026 Comm
 
 Complexity columns use **N** = pages streamed, **L** = content bytes per page (capped at 12 KB), **C** = shortlist capacity, **P** = worker threads, **K** = keywords in the matcher (total length **M** bytes).
 
-| Stage | M1 Max | Core i7-7567U | Heap allocs | Big-O serial | Big-O parallel |
+| Stage | M1 Max | Core i7-7567U | Heap allocs added | Big-O serial | Big-O parallel |
 | --- | --- | --- | --- | --- | --- |
 | WET record parsing | 23,500 records/s | 20,200 records/s | 4/record ✦ | O(N·L) | O(N·L / P) |
-| Aho-Corasick keyword scoring (native Julia) | 23,300 records/s | 18,700 records/s ✱ | 4/record ✦ | O(N·L) ‡ | O(N·L / P) ‡ |
+| Aho-Corasick keyword scoring (native Julia) | 23,300 records/s | 18,700 records/s ✱ | 0/record | O(N·L) ‡ | O(N·L / P) ‡ |
 | SimHash deduplication | 7,300 records/s | 9,100 records/s | 0/record | O(N·L) | O(N·L / P) |
 | Model2Vec embedding scoring (native Julia) | ~5,365 records/s | — | ~3.25/record ✧ | O(N·L) | O(N·L / P) |
 | Queue insert (top 1K) | 23,000 records/s | 19,200 records/s | 0/record steady | O(N·log C) | O(N·log C) † |
@@ -51,9 +51,9 @@ Native-Julia kernels vs Rust, same dataset:
 
 `✱` Extrapolated (machine mid-crawl): prior 15,200 records/s × 1.23 pipeline speedup.
 
-`✦` Steady WET-stream iteration cost (~430 bytes/record), identical in both rows; the matcher itself measures 0 allocs over all 21,465 records.
+`✦` Stream iteration cost (~430 bytes/record), paid once here; downstream rows show only what the stage adds on top.
 
-`✧` This repo's WET wrapper: 2/record zero-copy `StringView` + ~1.25/record amortized invalid-UTF-8 sanitized-copy fallback (~4.8% of records). Model2Vec.jl's encode is 0-alloc.
+`✧` Not the encoder (Model2Vec.jl's encode is 0-alloc): 2/record zero-copy `StringView` in this repo's WET wrapper + ~1.25/record amortized invalid-UTF-8 sanitized-copy fallback (~4.8% of records).
 
 `‡` Independent of keyword count K: one state transition per input byte regardless of automaton size; adding keywords costs only a one-time O(M) build.
 
