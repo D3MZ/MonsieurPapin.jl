@@ -35,25 +35,29 @@ Complexity columns use **N** = pages streamed, **L** = content bytes per page (c
 | Queue pop! extraction | 925,000 pops/s | 583,000 pops/s | 1/pop | O(C·log C) | O(C·log C) † |
 | LLM extraction | ~0.1 pages/s | — | — | O(C) | O(C) † |
 
-As a waterfall, each stage only processes the top candidates from the previous stage — the pipeline doesn't need to run every page through every stage.
+Waterfall: each stage only sees the top candidates from the previous stage.
 
-The four streaming stages are embarrassingly parallel per record (`O(N·L / P)`); `†` marks stages that stay serial — the queue mutates under a single lock and the LLM stage drains single-consumer (multiple consumers is a TODO), so it's the scoring that feeds them that parallelizes. These parallel bounds hold in practice on 8 threads: deduplication **7.2×** (9,900 → 71,900 records/s, near-linear since only the seen-set check is locked) and multi-file parsing **3.6×** (24,900 → 90,300 records/s, bounded by bandwidth as workers overlap per-file I/O and decompression).
+Measured 8-thread scaling: deduplication **7.2×** (9,900 → 71,900 records/s), multi-file parsing **3.6×** (24,900 → 90,300 records/s, bandwidth-bound).
 
-Keyword scoring runs on [**AhoCorasickILP.jl**](https://github.com/D3MZ/AhoCorasickILP.jl) — a native-Julia, allocation-free Aho-Corasick matcher — replacing the previous Rust `aho-corasick` FFI. On the raw match kernel over this dataset it is **3.44× faster than the Rust crate (50.3 ms vs 173.2 ms, identical counts, 0 vs 39,398 allocations)**; end-to-end the scoring stage is streaming-bound, so the full-pipeline throughput above rises a more modest ~1.23× and the stage is now nearly as fast as raw WET parsing. The speedup comes from a byte-class/premultiplied DFA plus a single-thread multi-stream ILP kernel (interleaved independent DFA chains that hide the dependent-load latency — not multithreading).
+Native-Julia kernels vs Rust, same dataset:
 
-Embedding scoring runs on [**Model2Vec.jl**](https://github.com/D3MZ/Model2Vec.jl) — a native-Julia model2vec tokenizer + pooler (WordPiece and Unigram/SentencePiece) — replacing the previous in-process Rust FFI bridge (`RustWorker.jl` / `deps/model2vec_rs_worker`, no longer required to build the project). Head-to-head over this same dataset (`potion-multilingual-128M`, Unigram tokenizer, see [test/benchmarks.jl](test/benchmarks.jl)'s "Model2Vec head-to-head" test) it is **8.95× faster than the Rust FFI bridge it replaced, with 0.9999999... score correlation** (Core i7-7567U not yet remeasured on this backend — mid-crawl and unavailable, hence the `—` above). Model2Vec.jl's Unigram backend implements SentencePiece's `Precompiled` charsmap normalizer byte-for-byte (a darts double-array trie decoded from the model's own tokenizer.json, rather than approximating it with generic Unicode normalization) and walks its vocabulary through a second darts double-array trie built at load time — the ~3.25/record above is entirely this repo's WET-record wrapper (see footnote `✧`), and Model2Vec.jl's own isolated hot path hits true zero allocations; see [Model2Vec.jl's README](https://github.com/D3MZ/Model2Vec.jl#readme) for the full writeup. Versus a fair, no-FFI-overhead Rust reference running the identical algorithm (Model2Vec.jl's own benchmark, not the FFI bridge above), Model2Vec.jl now measures **1.62×–3.20×** across both tokenizer families — so the 8.95× here is a mix of a genuine algorithmic win and FFI/ccall crossing overhead Rust was paying that Julia doesn't, but the algorithm itself now leads Rust too, not just the in-process comparison.
+| Kernel | vs Rust | Allocs (Julia vs Rust) |
+| --- | --- | --- |
+| [AhoCorasickILP.jl](https://github.com/D3MZ/AhoCorasickILP.jl) match kernel | **3.44×** faster (50.3 ms vs 173.2 ms, identical counts) | 0 vs 39,398 |
+| [Model2Vec.jl](https://github.com/D3MZ/Model2Vec.jl) vs retired Rust FFI bridge | **8.95×** faster, 0.9999999 score correlation | 0 (hot path) vs 3/call |
+| Model2Vec.jl vs no-FFI Rust reference, identical algorithm | **1.62×–3.20×** across both tokenizer families | — |
 
-`✱` Core i7-7567U figure for this row is **extrapolated, not measured**: that machine is mid-crawl and unavailable, so its prior 15,200 records/s is scaled by the M1 Max full-pipeline speedup from this change (×1.23). To be replaced with a measured value.
+`†` serial: queue mutates under one lock; LLM stage drains single-consumer.
 
-`✦` The matcher itself is **allocation-free**: scoring pre-parsed records measures 0 allocations over the full 21,465-record sample (versus 3 per call for the former Rust FFI). The 4/record in both rows is the same steady per-record cost of iterating the gzip WET stream (~430 bytes/record); keyword scoring adds nothing on top of parsing.
+`✱` Extrapolated (machine mid-crawl): prior 15,200 records/s × 1.23 pipeline speedup.
 
-`✧` Model2Vec.jl's encode hot path is allocation-free in isolation (see its README). The ~3.25/record is this repo's WET wrapper: 2/record building the zero-copy `StringView` over the record's inline content, plus ~1.25/record amortized from the ~4.8% of crawled records with invalid interior UTF-8, which fall back to an allocating sanitized copy before encoding.
+`✦` Steady WET-stream iteration cost (~430 bytes/record), identical in both rows; the matcher itself measures 0 allocs over all 21,465 records.
 
-`‡` Aho-Corasick keyword scoring is **independent of the keyword count K**: the automaton makes one state transition per input byte whether it holds 50 keywords or 50,000, so scan throughput does not change as the keyword set grows. The `O(N·L)` cost above already includes matching every keyword at once. Adding keywords costs only a one-time `O(M)` automaton build at startup and proportional automaton memory — never scan time. (`N·L` itself is the upper bound; the waterfall only ever scans the pages the earlier stages admit.)
+`✧` This repo's WET wrapper: 2/record zero-copy `StringView` + ~1.25/record amortized invalid-UTF-8 sanitized-copy fallback (~4.8% of records). Model2Vec.jl's encode is 0-alloc.
 
-Allocation counts are what scale to a full crawl. Header parsing reads into a reused buffer rather than allocating per line, so the per-record figures above are a small, constant stream-iteration cost (~430 bytes/record), not growth: heap pressure stays flat across billions of pages because nothing accumulates per record.
+`‡` Independent of keyword count K: one state transition per input byte regardless of automaton size; adding keywords costs only a one-time O(M) build.
 
-See [test/benchmarks.jl](test/benchmarks.jl) for how to reproduce these numbers.
+Reproduce with [test/benchmarks.jl](test/benchmarks.jl).
 
 ## Quick Start
 
