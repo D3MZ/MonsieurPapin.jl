@@ -10,12 +10,18 @@ one(_) = 1
 # (HTTP, JlrsCore, etc.) that add noise to Julia's task allocation tracking.
 let path = joinpath(dirname(@__DIR__), "data", "warc.wet.gz")
     @testset "zero-alloc" begin
-        first(wets(path))
+        warmed = wets(path)
+        first(warmed)
+        foreach(_ -> nothing, warmed)
         channel = wets(path)
         @test @allocations(first(channel)) == 0
-        first(wets(path; languages=["eng"]))
+        foreach(_ -> nothing, channel)
+        warmedfiltered = wets(path; languages=["eng"])
+        first(warmedfiltered)
+        foreach(_ -> nothing, warmedfiltered)
         filtered = wets(path; languages=["eng"])
         @test @allocations(first(filtered)) == 0
+        foreach(_ -> nothing, filtered)
         @test sum(one, wets(path)) == 21_465
         @test sum(one, wets(path)) + sum(one, wets(path)) == 2 * 21_465
     end

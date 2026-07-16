@@ -35,6 +35,7 @@ corerecord(content; language="eng", uri="https://example.com") =
     @test map(MonsieurPapin.language, filtered) == ["eng", "zho,eng"]
     channel = wets(path; capacity=2, languages=["eng"])
     @test @allocations(first(channel)) == 0
+    foreach(_ -> nothing, channel)
 
     cleaned = MonsieurPapin.cleankeywords([" trend / breakout ", "趋势，突破", "x", repeat("a", 61), "trend"])
     @test cleaned == ["trend", "breakout", "趋势", "突破"]
