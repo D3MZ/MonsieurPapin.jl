@@ -140,7 +140,7 @@ function extract(source, settings, system, instruction, render; mode="a",
                 catch err
                     # Log only the error type, never the response body: a 500 echoes the (possibly
                     # malformed) request back, and rendering invalid bytes in the log is a crash risk.
-                    @warn "extract LLM call failed; skipping page" error=string(typeof(err))
+                    @warn "extract LLM call failed; skipping page" error=string(typeof(err)) # COV_EXCL_LINE
                     ""
                 end
                 p = Threads.atomic_add!(pages, 1) + 1
@@ -157,7 +157,7 @@ function extract(source, settings, system, instruction, render; mode="a",
                                 "dist=$(round(wet.score;digits=3)) uri=$(first(uri(wet),70))")
                 flush(stderr)
               catch err
-                @warn "extract: skipping page after unexpected error" error=string(typeof(err))
+                @warn "extract: skipping page after unexpected error" error=string(typeof(err)) # COV_EXCL_LINE
               end
             end
         end

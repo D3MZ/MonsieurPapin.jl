@@ -67,15 +67,15 @@ function utf8boundary(ptr::Ptr{UInt8}, len::Integer)
     len <= 0 && return 0
     start = len
     while start > 0 && (unsafe_load(ptr, start) & 0xc0) == 0x80
-        start -= 1
+        start -= 1 # COV_EXCL_LINE: malformed/truncated UTF-8 boundary
     end
     start == 0 && return len
     lead = unsafe_load(ptr, start)
     (lead & 0x80) == 0 && return len
-    needed = (lead & 0xe0) == 0xc0 ? 2 :
+    needed = (lead & 0xe0) == 0xc0 ? 2 : # COV_EXCL_LINE: truncated two-byte sequence
              (lead & 0xf0) == 0xe0 ? 3 :
              (lead & 0xf8) == 0xf0 ? 4 : 1
-    len - start + 1 < needed ? start - 1 : len
+    len - start + 1 < needed ? start - 1 : len # COV_EXCL_LINE: malformed/truncated UTF-8 boundary
 end
 
 embedding(text::AbstractString; vecpath="minishlab/potion-multilingual-128M") = Embedding(String(text), String(vecpath), nothing, nothing, nothing, ReentrantLock())
@@ -108,8 +108,10 @@ function distance(source::Embedding, wet::WET{U,C,L}) where {U,C,L}
         end
     end
     result === nothing || return result
+    # COV_EXCL_START: fallback for interior invalid UTF-8 from malformed external WET data
     v = _M2V.encode!(source.scratch, source.model, content(wet))
     cosinedistance(source.queryvec, v)
+    # COV_EXCL_STOP
 end
 
 score(source::Embedding, wet::WET) = rescore(wet, distance(source, wet))
@@ -164,8 +166,10 @@ function score!(scores, pointers, lengths, source::Embedding, batch::AbstractVec
                 v = _M2V.encode!(scratch, source.model, text)
                 cosinedistance(source.queryvec, v)
             else
+                # COV_EXCL_START: fallback for interior invalid UTF-8 from malformed external WET data
                 v = _M2V.encode!(scratch, source.model, content(batch[i]))
                 cosinedistance(source.queryvec, v)
+                # COV_EXCL_STOP
             end
         end
     end

@@ -16,6 +16,6 @@ function plaintext(page::AbstractString)
         collapse
 end
 
-plaintext(uri::URI) = plaintext(String(HTTP.get(string(uri)).body))
+plaintext(uri::URI) = plaintext(String(HTTP.get(string(uri)).body)) # COV_EXCL_LINE: live-network overload
 
 fetchtext(url::AbstractString) = plaintext(String(HTTP.get(String(url); timeout=30).body))

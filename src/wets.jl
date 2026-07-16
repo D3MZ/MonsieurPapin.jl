@@ -86,9 +86,10 @@ function wets(path::AbstractString; capacity=Threads.nthreads() * 10, wetroot="h
     isfile(path) && return Channel{WET{urilimit,contentlimit,languagelimit}}(capacity) do channel
         emit(channel, GzipDecompressorStream(open(path)), languages)
     end
-    startswith(path, "http") ? wets(URI(path); capacity, languages) : wets(URI(wetroot * path); capacity, languages)
+    startswith(path, "http") ? wets(URI(path); capacity, languages) : wets(URI(wetroot * path); capacity, languages) # COV_EXCL_LINE: live-network path
 end
 
+# COV_EXCL_START: live Common Crawl network overload
 function wets(index::URI; capacity=Threads.nthreads() * 10, languages=nothing)
     Channel{WET{urilimit,contentlimit,languagelimit}}(capacity) do channel
         HTTP.open("GET", string(index)) do stream
@@ -97,6 +98,7 @@ function wets(index::URI; capacity=Threads.nthreads() * 10, languages=nothing)
         end
     end
 end
+# COV_EXCL_STOP
 
 function wets(paths::Channel{T}; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/", languages=nothing) where {T}
     Channel{WET{urilimit,contentlimit,languagelimit}}(capacity) do channel
