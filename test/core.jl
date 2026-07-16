@@ -2,7 +2,7 @@ using CodecZlib
 using MonsieurPapin
 using Test
 
-entryrecord(content; language="eng", uri="https://example.com") =
+corerecord(content; language="eng", uri="https://example.com") =
     "WARC/1.0\r\n" *
     "WARC-Type: conversion\r\n" *
     "WARC-Target-URI: $(uri)\r\n" *
@@ -25,9 +25,9 @@ entryrecord(content; language="eng", uri="https://example.com") =
     path = tempname() * ".gz"
     open(path, "w") do file
         stream = GzipCompressorStream(file)
-        write(stream, entryrecord(repeat("skip me", 500); language="rus"))
-        write(stream, entryrecord("keep me"; language="eng"))
-        write(stream, entryrecord("keep me too"; language="zho,eng"))
+        write(stream, corerecord(repeat("skip me", 500); language="rus"))
+        write(stream, corerecord("keep me"; language="eng"))
+        write(stream, corerecord("keep me too"; language="zho,eng"))
         close(stream)
     end
 
@@ -35,4 +35,30 @@ entryrecord(content; language="eng", uri="https://example.com") =
     @test map(MonsieurPapin.language, filtered) == ["eng", "zho,eng"]
     channel = wets(path; capacity=2, languages=["eng"])
     @test @allocations(first(channel)) == 0
+
+    cleaned = MonsieurPapin.cleankeywords([" trend / breakout ", "趋势，突破", "x", repeat("a", 61), "trend"])
+    @test cleaned == ["trend", "breakout", "趋势", "突破"]
+
+    firsthash = simhash("A momentum trading strategy")
+    @test firsthash == simhash("A momentum trading strategy")
+    seen = SeenSet(2)
+    @test !MonsieurPapin.seen!(seen, firsthash)
+    @test MonsieurPapin.seen!(seen, firsthash)
+    @test !MonsieurPapin.seen!(seen, simhash("gardening"))
+    @test !MonsieurPapin.seen!(seen, simhash("astronomy"))
+    @test !MonsieurPapin.seen!(seen, firsthash)
+
+    records = collect(wets(path; capacity=2, languages=["eng"]))
+    recordsource = Channel{eltype(records)}(length(records)) do source
+        foreach(record -> put!(source, record), records)
+    end
+    selected = collect(select(AC(["keep"]), recordsource; capacity=2))
+    @test length(selected) == 2
+    @test all(record -> MonsieurPapin.score(record) == 1, selected)
+
+    duplicates = Channel{eltype(records)}(2) do source
+        put!(source, records[1])
+        put!(source, records[1])
+    end
+    @test length(collect(unique(SeenSet(10), duplicates))) == 1
 end
