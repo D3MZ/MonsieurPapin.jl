@@ -1,6 +1,13 @@
 using CodecZlib
+using HTTP
+using HTTP: URI
 using MonsieurPapin
+using Sockets
 using Test
+
+function compressed(text::AbstractString)
+    transcode(GzipCompressor, codeunits(text))
+end
 
 corerecord(content; language="eng", uri="https://example.com") =
     "WARC/1.0\r\n" *
@@ -62,4 +69,32 @@ corerecord(content; language="eng", uri="https://example.com") =
         put!(source, records[1])
     end
     @test length(collect(unique(SeenSet(10), duplicates))) == 1
+
+    server = HTTP.serve!(ip"127.0.0.1", 0; verbose=false) do req
+        if req.target == "/paths"
+            HTTP.Response(200, compressed("https://example.com/stream\n"))
+        elseif req.target == "/wet"
+            HTTP.Response(200, compressed(corerecord("hello")))
+        else
+            HTTP.Response(404)
+        end
+    end
+
+    try
+        host, port = getsockname(server.listener.server)
+        base = "http://$(host):$(Int(port))"
+        @test collect(wetpaths("$base/paths")) == ["https://example.com/stream"]
+
+        remote = collect(wets(URI("$base/wet"); languages=["eng"]))
+        @test length(remote) == 1
+        @test MonsieurPapin.uri(first(remote)) == "https://example.com"
+        @test MonsieurPapin.language(first(remote)) == "eng"
+
+        remote = collect(wets("$base/wet"; languages=["eng"]))
+        @test length(remote) == 1
+        @test MonsieurPapin.uri(first(remote)) == "https://example.com"
+        @test MonsieurPapin.language(first(remote)) == "eng"
+    finally
+        close(server)
+    end
 end

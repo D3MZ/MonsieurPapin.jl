@@ -4,6 +4,8 @@ using Dates
 using MonsieurPapin
 using Test
 
+boundary(bytes::AbstractVector{UInt8}) = GC.@preserve bytes MonsieurPapin.utf8boundary(pointer(bytes), length(bytes))
+
 record(content; language="eng", uri="https://example.com") =
     "WARC/1.0\r\n" *
     "WARC-Type: conversion\r\n" *
@@ -36,6 +38,10 @@ end
     @test MonsieurPapin.score(matcher, first(sample)) == 3.0
     @test MonsieurPapin.score(matcher, last(sample)) == 4.0
 
+    @test boundary(UInt8[0x61, 0xE2, 0x82]) == 1
+    @test boundary(UInt8[0xE2, 0x82]) == 0
+    @test boundary(UInt8[0xC3, 0xA9]) == 2
+
     # The content pointer Rust slices must land on the real content bytes (struct-layout guard).
     text = "héllo wörld"
     page = WET(MonsieurPapin.Snippet("u", Val(8)), MonsieurPapin.Snippet(text, Val(64)),
@@ -58,6 +64,21 @@ end
         @test !isrelevant(source, banana; threshold=0.9)
         @test length(records) == 2
         @test minimum(scores) < maximum(scores)
+
+        MonsieurPapin.handle!(source)
+        bad = WET(
+            MonsieurPapin.Snippet("https://example.com", Val(4096)),
+            MonsieurPapin.Snippet(UInt8[0x61, 0xC3, 0x61], 1, 3, Val(12000)),
+            MonsieurPapin.Snippet("eng", Val(64)),
+            DateTime(2026, 1, 1),
+            3,
+            0.0,
+        )
+        @test isfinite(distance(source, bad))
+        scratch = source.scratch
+        scores = Float64[]; pointers = UInt[]; lengths = UInt[]
+        MonsieurPapin.score!(scores, pointers, lengths, source, [bad], scratch)
+        @test isfinite(first(scores))
 
         if get(ENV, "MONSIEURPAPIN_BENCHMARK", "false") == "true"
             display(@benchmark isrelevant($source, "kitten dog"; threshold=0.0))

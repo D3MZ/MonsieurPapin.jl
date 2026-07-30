@@ -27,7 +27,7 @@ testsettings(baseurl; languages=["eng"], outputpath="research.md") = Dict(
     "prompts" => Dict("system" => "", "input" => "", "local_system" => "", "local_input" => "", "keywords_system" => "Extract keywords from this text.", "summary_system" => "Summarize this text."),
 )
 
-excerpt(text, language, score=0.0) = WET(
+excerpt(text, language="eng", score=0.0) = WET(
     MonsieurPapin.Snippet("https://example.com", Val(32)),
     MonsieurPapin.Snippet(text, Val(64)),
     MonsieurPapin.Snippet(language, Val(32)),
@@ -184,5 +184,41 @@ end
         finally
             close(researchservice.server)
         end
+    end
+
+    failing = HTTP.serve!(ip"127.0.0.1", 0; verbose=false) do req
+        req.method == "GET" && return HTTP.Response(200, "seed")
+        HTTP.Response(500, "failure")
+    end
+
+    try
+        host, port = getsockname(failing.listener.server)
+        settings = testsettings("http://$(host):$(Int(port))"; languages=["eng"])
+        settings["llm"]["parallel"] = 1
+        settings["output"]["path"] = tempname()
+        failure_prompt = MonsieurPapin.prompt(excerpt("strategy"))
+        task = @async extract([excerpt("strategy")], settings, settings["prompts"]["system"], settings["prompts"]["input"], failure_prompt; mode="w")
+        wait(task)
+        @test isfile(settings["output"]["path"])
+        @test isempty(read(settings["output"]["path"], String))
+    finally
+        close(failing)
+    end
+
+    extraction = llmserver() do payload
+        Dict("choices" => [Dict("message" => Dict("content" => "ok"))])
+    end
+
+    try
+        host, port = getsockname(extraction.server.listener.server)
+        settings = testsettings(extraction.baseurl; languages=["eng"])
+        settings["llm"]["parallel"] = 1
+        settings["output"]["path"] = tempname()
+        task = @async extract(["strategy"], settings, settings["prompts"]["system"], settings["prompts"]["input"], _ -> "ignored"; mode="w")
+        wait(task)
+        @test isfile(settings["output"]["path"])
+        @test occursin("ok", read(settings["output"]["path"], String))
+    finally
+        close(extraction.server)
     end
 end
