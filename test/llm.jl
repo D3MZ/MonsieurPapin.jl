@@ -172,11 +172,15 @@ end
             task = MonsieurPapin.research(settings, [researchservice.baseurl * "/seed"], path)
             wait(task)
             report = read(outputpath, String)
-            req = take!(researchservice.requests)
+            requests = Dict{String,Any}[]
+            while isready(researchservice.requests)
+                push!(requests, take!(researchservice.requests))
+            end
+            @test !isempty(requests)
+            @test any(req -> occursin("SOURCE URL: https://example.com/rsi", req["messages"][2]["content"]), requests)
             @test !isempty(report)
             @test occursin("https://example.com/rsi", report)
             @test occursin("```julia", report)
-            @test occursin("SOURCE URL: https://example.com/rsi", req["messages"][2]["content"])
         finally
             close(researchservice.server)
         end
