@@ -21,6 +21,7 @@ end
 # "org/repo" vecpath to its already-cached local snapshot, erroring clearly rather than silently
 # falling back to a network fetch.
 function hubsnapshot(repo::AbstractString)
+    isdir(repo) && return repo
     base = joinpath(homedir(), ".cache", "huggingface", "hub", "models--" * replace(repo, "/" => "--"), "snapshots")
     isdir(base) || error("scoring.jl: $repo not found in local HF cache ($base); download it first")
     snaps = readdir(base)

@@ -1,8 +1,11 @@
 using BenchmarkTools
 using CodecZlib
 using Dates
+using Model2Vec
 using MonsieurPapin
 using Test
+
+include(joinpath(dirname(pathof(Model2Vec)), "..", "test", "fixtures.jl"))
 
 boundary(bytes::AbstractVector{UInt8}) = GC.@preserve bytes MonsieurPapin.utf8boundary(pointer(bytes), length(bytes))
 
@@ -53,35 +56,38 @@ end
     end
 
     if get(ENV, "MONSIEURPAPIN_MODEL2VEC", "false") == "true"
-        source = embedding("cat dog")
-        banana = embedding("banana")
-        records = collect(select(source, pages(); capacity=10))
-        scores = map(wet -> wet.score, records)
+        mktempdir() do dir
+            vecpath = buildwordpiecefixture(joinpath(dir, "model"))
+            source = embedding("cat dog"; vecpath)
+            banana = embedding("banana"; vecpath)
+            records = collect(select(source, pages(); capacity=10))
+            scores = map(wet -> wet.score, records)
 
-        @test distance(source, "kitten dog") < distance(source, "banana")
-        @test distance(source, first(sample)) < distance(source, last(sample))
-        @test isrelevant(source, "kitten dog"; threshold=0.0)
-        @test !isrelevant(source, banana; threshold=0.9)
-        @test length(records) == 2
-        @test minimum(scores) < maximum(scores)
+            @test distance(source, "kitten dog") < distance(source, "banana")
+            @test distance(source, first(sample)) < distance(source, last(sample))
+            @test isrelevant(source, "kitten dog"; threshold=0.0)
+            @test !isrelevant(source, banana; threshold=0.9)
+            @test length(records) == 2
+            @test minimum(scores) < maximum(scores)
 
-        MonsieurPapin.handle!(source)
-        bad = WET(
-            MonsieurPapin.Snippet("https://example.com", Val(4096)),
-            MonsieurPapin.Snippet(UInt8[0x61, 0xC3, 0x61], 1, 3, Val(12000)),
-            MonsieurPapin.Snippet("eng", Val(64)),
-            DateTime(2026, 1, 1),
-            3,
-            0.0,
-        )
-        @test isfinite(distance(source, bad))
-        scratch = source.scratch
-        scores = Float64[]; pointers = UInt[]; lengths = UInt[]
-        MonsieurPapin.score!(scores, pointers, lengths, source, [bad], scratch)
-        @test isfinite(first(scores))
+            MonsieurPapin.handle!(source)
+            bad = WET(
+                MonsieurPapin.Snippet("https://example.com", Val(4096)),
+                MonsieurPapin.Snippet(UInt8[0x61, 0xC3, 0x61], 1, 3, Val(12000)),
+                MonsieurPapin.Snippet("eng", Val(64)),
+                DateTime(2026, 1, 1),
+                3,
+                0.0,
+            )
+            @test isfinite(distance(source, bad))
+            scratch = source.scratch
+            scores = Float64[]; pointers = UInt[]; lengths = UInt[]
+            MonsieurPapin.score!(scores, pointers, lengths, source, [bad], scratch)
+            @test isfinite(first(scores))
 
-        if get(ENV, "MONSIEURPAPIN_BENCHMARK", "false") == "true"
-            display(@benchmark isrelevant($source, "kitten dog"; threshold=0.0))
+            if get(ENV, "MONSIEURPAPIN_BENCHMARK", "false") == "true"
+                display(@benchmark isrelevant($source, "kitten dog"; threshold=0.0))
+            end
         end
     end
 end
