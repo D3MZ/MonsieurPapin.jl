@@ -20,5 +20,7 @@ ignore:
   - "deps/**"
   - "docs/**"
   - "test/**"
+  - "src/MonsieurPapin.jl" # module declarations and includes run during package loading
+  - "src/RustWorker.jl"    # obsolete benchmark-only FFI backend; replaced by Model2Vec.jl
   - "tmp/**"
   - "data/**"
