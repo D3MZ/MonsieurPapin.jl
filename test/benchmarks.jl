@@ -338,8 +338,8 @@ end
         server = HTTP.serve!("127.0.0.1", 0; verbose=false) do req::HTTP.Request
             HTTP.Response(200, JSON.json(Dict("choices" => [Dict("message" => Dict("content" => "strategy description"))])))
         end
-        host, port = Sockets.getsockname(server.listener.server)
-        baseurl = "http://$(host):$(port)"
+        port = hasproperty(server.listener, :server) ? last(Sockets.getsockname(server.listener.server)) : HTTP.port(server)
+        baseurl = "http://127.0.0.1:$(port)"
         settings = Dict(
             "llm" => Dict("baseurl" => baseurl, "path" => "/v1/chat/completions", "model" => "qwen/qwen3.6-27b", "password" => "", "timeout" => 120),
         )

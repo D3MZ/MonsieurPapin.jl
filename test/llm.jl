@@ -14,8 +14,8 @@ function llmserver(respond; seed="seed content")
         put!(requests, payload)
         HTTP.Response(200, JSON.json(respond(payload)))
     end
-    host, port = getsockname(server.listener.server)
-    (server=server, requests=requests, baseurl="http://$(host):$(Int(port))")
+    port = hasproperty(server.listener, :server) ? last(getsockname(server.listener.server)) : HTTP.port(server)
+    (server=server, requests=requests, baseurl="http://127.0.0.1:$(Int(port))")
 end
 
 testsettings(baseurl; languages=["eng"], outputpath="research.md") = Dict(
@@ -192,8 +192,8 @@ end
     end
 
     try
-        host, port = getsockname(failing.listener.server)
-        settings = testsettings("http://$(host):$(Int(port))"; languages=["eng"])
+        port = hasproperty(failing.listener, :server) ? last(getsockname(failing.listener.server)) : HTTP.port(failing)
+        settings = testsettings("http://127.0.0.1:$(Int(port))"; languages=["eng"])
         settings["llm"]["parallel"] = 1
         settings["output"]["path"] = tempname()
         failure_prompt = MonsieurPapin.prompt(excerpt("strategy"))
@@ -210,7 +210,6 @@ end
     end
 
     try
-        host, port = getsockname(extraction.server.listener.server)
         settings = testsettings(extraction.baseurl; languages=["eng"])
         settings["llm"]["parallel"] = 1
         settings["output"]["path"] = tempname()

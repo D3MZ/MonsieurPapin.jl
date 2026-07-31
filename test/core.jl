@@ -81,8 +81,8 @@ corerecord(content; language="eng", uri="https://example.com") =
     end
 
     try
-        host, port = getsockname(server.listener.server)
-        base = "http://$(host):$(Int(port))"
+        port = hasproperty(server.listener, :server) ? last(getsockname(server.listener.server)) : HTTP.port(server)
+        base = "http://127.0.0.1:$(Int(port))"
         @test collect(wetpaths("$base/paths")) == ["https://example.com/stream"]
 
         remote = collect(wets(URI("$base/wet"); languages=["eng"]))
