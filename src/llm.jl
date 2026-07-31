@@ -23,7 +23,7 @@ function request(; model::String, systemprompt::String, input::String,
         body["enable_thinking"] = false
     end
     headers = ["Content-Type" => "application/json", "Authorization" => "Bearer $(password)"]
-    response = HTTP.post(string(baseurl, path); headers=headers, body=JSON.json(body), readtimeout=timeout)
+    response = HTTP.post(string(baseurl, path); headers=headers, body=JSON.json(body), readtimeout=timeout, retry=false)
     return JSON.parse(String(response.body))
 end
 
@@ -137,4 +137,3 @@ function summarize(settings, text; limit=140)
     )
     return message(response)
 end
-
