@@ -21,7 +21,7 @@ using Sockets
 
     @test plaintext(page) == "Example Hello & Goodbye Plain text."
 
-    server = HTTP.serve!(ip"127.0.0.1", 0; verbose=false) do req
+    server = HTTP.serve!("127.0.0.1", 0; verbose=false) do req
         req.target == "/live" && return HTTP.Response(200, "<html><body>Example</body></html>")
         return HTTP.Response(404)
     end

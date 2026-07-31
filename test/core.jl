@@ -70,7 +70,7 @@ corerecord(content; language="eng", uri="https://example.com") =
     end
     @test length(collect(unique(SeenSet(10), duplicates))) == 1
 
-    server = HTTP.serve!(ip"127.0.0.1", 0; verbose=false) do req
+    server = HTTP.serve!("127.0.0.1", 0; verbose=false) do req
         if req.target == "/paths"
             HTTP.Response(200, compressed("https://example.com/stream\n"))
         elseif req.target == "/wet"

@@ -335,7 +335,7 @@ end
     end
 
     @testset "LLM prompt + request overhead" begin
-        server = HTTP.serve!(ip"127.0.0.1", 0; verbose=false) do req::HTTP.Request
+        server = HTTP.serve!("127.0.0.1", 0; verbose=false) do req::HTTP.Request
             HTTP.Response(200, JSON.json(Dict("choices" => [Dict("message" => Dict("content" => "strategy description"))])))
         end
         host, port = Sockets.getsockname(server.listener.server)

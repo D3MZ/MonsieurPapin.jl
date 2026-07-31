@@ -8,7 +8,7 @@ using Test
 
 function llmserver(respond; seed="seed content")
     requests = Channel{Dict{String,Any}}(8)
-    server = HTTP.serve!(ip"127.0.0.1", 0; verbose=false) do req::HTTP.Request
+    server = HTTP.serve!("127.0.0.1", 0; verbose=false) do req::HTTP.Request
         req.method == "GET" && return HTTP.Response(200, seed)
         payload = JSON.parse(String(req.body))
         put!(requests, payload)
@@ -186,7 +186,7 @@ end
         end
     end
 
-    failing = HTTP.serve!(ip"127.0.0.1", 0; verbose=false) do req
+    failing = HTTP.serve!("127.0.0.1", 0; verbose=false) do req
         req.method == "GET" && return HTTP.Response(200, "seed")
         HTTP.Response(500, "failure")
     end
