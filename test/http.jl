@@ -27,8 +27,8 @@ using Sockets
     end
 
     try
-        host, port = getsockname(server.listener.server)
-        @test plaintext(URI("http://$(host):$(Int(port))/live")) == "Example"
+        port = hasproperty(server.listener, :server) ? last(getsockname(server.listener.server)) : HTTP.port(server)
+        @test plaintext(URI("http://127.0.0.1:$(Int(port))/live")) == "Example"
     finally
         close(server)
     end
