@@ -2,14 +2,17 @@ using CodecZlib
 using Dates
 using HTTP
 using JSON
+using Model2Vec
 using MonsieurPapin
 using Sockets
 using Test
 
+include(joinpath(dirname(pathof(Model2Vec)), "..", "test", "fixtures.jl"))
+
 function llmserver(respond; seed="seed content")
     requests = Channel{Dict{String,Any}}(8)
     server = HTTP.serve!("127.0.0.1", 0; verbose=false) do req::HTTP.Request
-        req.method == "GET" && return HTTP.Response(200, seed)
+        req.method == "GET" && return HTTP.Response(200, ["Content-Length" => string(ncodeunits(seed)), "Connection" => "close"], seed)
         payload = JSON.parse(String(req.body))
         put!(requests, payload)
         HTTP.Response(200, JSON.json(respond(payload)))
@@ -18,10 +21,10 @@ function llmserver(respond; seed="seed content")
     (server=server, requests=requests, baseurl="http://127.0.0.1:$(Int(port))")
 end
 
-testsettings(baseurl; languages=["eng"], outputpath="research.md") = Dict(
+testsettings(baseurl; languages=["eng"], outputpath="research.md", embeddingmodel="minishlab/potion-multilingual-128M") = Dict(
     "crawl" => Dict("languages" => languages),
     "pipeline" => Dict("capacity" => 100, "threshold" => 0.6, "dedupe_capacity" => 1000, "keywords" => String[]),
-    "embedding" => Dict("model" => "minishlab/potion-multilingual-128M"),
+    "embedding" => Dict("model" => embeddingmodel),
     "llm" => Dict("baseurl" => baseurl, "path" => "/v1/chat/completions", "model" => "qwen/qwen3.6-27b", "password" => "", "timeout" => 120),
     "output" => Dict("path" => outputpath),
     "prompts" => Dict("system" => "", "input" => "", "local_system" => "", "local_input" => "", "keywords_system" => "Extract keywords from this text.", "summary_system" => "Summarize this text."),
@@ -142,13 +145,16 @@ end
     end
 
     try
-        outputpath = tempname()
-        settings = testsettings(emptyservice.baseurl; languages=["eng"], outputpath=outputpath)
-        task = MonsieurPapin.research(settings, [emptyservice.baseurl * "/seed"], wetpath(entryrecord("Gardening and cooking only."; uri="https://example.com/none")))
-        wait(task)
-        @test isfile(outputpath)
-        @test isempty(read(outputpath, String))
-        @test !isready(emptyservice.requests)
+        mktempdir() do dir
+            vecpath = buildwordpiecefixture(joinpath(dir, "model"))
+            outputpath = tempname()
+            settings = testsettings(emptyservice.baseurl; languages=["eng"], outputpath=outputpath, embeddingmodel=vecpath)
+            task = MonsieurPapin.research(settings, [emptyservice.baseurl * "/seed"], wetpath(entryrecord("Gardening and cooking only."; uri="https://example.com/none")))
+            wait(task)
+            @test isfile(outputpath)
+            @test isempty(read(outputpath, String))
+            @test !isready(emptyservice.requests)
+        end
     finally
         close(emptyservice.server)
     end
@@ -163,24 +169,27 @@ end
         end
 
         try
-            outputpath = tempname()
-            settings = testsettings(researchservice.baseurl; languages=["eng"], outputpath=outputpath)
-            path = wetpath(
-                entryrecord("Relative strength index is a momentum trading indicator used to spot overbought and oversold conditions."; uri="https://example.com/rsi"),
-                entryrecord("Tomato gardening for spring."; uri="https://example.com/garden"),
-            )
-            task = MonsieurPapin.research(settings, [researchservice.baseurl * "/seed"], path)
-            wait(task)
-            report = read(outputpath, String)
-            requests = Dict{String,Any}[]
-            while isready(researchservice.requests)
-                push!(requests, take!(researchservice.requests))
+            mktempdir() do dir
+                vecpath = buildwordpiecefixture(joinpath(dir, "model"))
+                outputpath = tempname()
+                settings = testsettings(researchservice.baseurl; languages=["eng"], outputpath=outputpath, embeddingmodel=vecpath)
+                path = wetpath(
+                    entryrecord("Relative strength index is a momentum trading indicator used to spot overbought and oversold conditions."; uri="https://example.com/rsi"),
+                    entryrecord("Tomato gardening for spring."; uri="https://example.com/garden"),
+                )
+                task = MonsieurPapin.research(settings, [researchservice.baseurl * "/seed"], path)
+                wait(task)
+                report = read(outputpath, String)
+                requests = Dict{String,Any}[]
+                while isready(researchservice.requests)
+                    push!(requests, take!(researchservice.requests))
+                end
+                @test !isempty(requests)
+                @test any(req -> occursin("SOURCE URL: https://example.com/rsi", req["messages"][2]["content"]), requests)
+                @test !isempty(report)
+                @test occursin("https://example.com/rsi", report)
+                @test occursin("```julia", report)
             end
-            @test !isempty(requests)
-            @test any(req -> occursin("SOURCE URL: https://example.com/rsi", req["messages"][2]["content"]), requests)
-            @test !isempty(report)
-            @test occursin("https://example.com/rsi", report)
-            @test occursin("```julia", report)
         finally
             close(researchservice.server)
         end
@@ -188,7 +197,7 @@ end
 
     failing = HTTP.serve!("127.0.0.1", 0; verbose=false) do req
         req.method == "GET" && return HTTP.Response(200, "seed")
-        HTTP.Response(500, ["Connection" => "close"], "failure")
+        HTTP.Response(500, ["Content-Length" => "7", "Connection" => "close"], "failure")
     end
 
     try
