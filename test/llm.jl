@@ -188,7 +188,7 @@ end
 
     failing = HTTP.serve!("127.0.0.1", 0; verbose=false) do req
         req.method == "GET" && return HTTP.Response(200, "seed")
-        HTTP.Response(500, "failure")
+        HTTP.Response(500, ["Connection" => "close"], "failure")
     end
 
     try
