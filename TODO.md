@@ -40,7 +40,7 @@ The core waterfall, configured backend boundary, and subscription telemetry path
 
 - [ ] Add crash checkpoint/resume for multi-day runs, including pipeline and usage-log state.
 - [x] Validate the complete subscription run on `z13` against two actual WET archives with the authenticated Codex subscription; the repaired run completed 159-language keyword sweep (2,460 terms), 18 GPT-5.5 extraction calls, one retained finding, and clean teardown. The first retry attempt established that Spark is unsupported for this ChatGPT account.
-- [ ] Commit/push only the validated changes to `main` and synchronize the other checkout.
+- [x] Commit/push only the validated changes to `main` and synchronize the other checkout.
 
 ### Opt-in integration testing
 
