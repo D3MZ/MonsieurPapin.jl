@@ -82,35 +82,71 @@ languages(wet::WET) = filter(code -> !isempty(code), strip.(split(language(wet),
 
 # --- High-level API ---
 
-function wets(path::AbstractString; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/", languages=nothing)
+function wets(path::AbstractString; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/", languages=nothing, monitor=nothing)
     isfile(path) && return Channel{WET{urilimit,contentlimit,languagelimit}}(capacity) do channel
-        emit(channel, GzipDecompressorStream(open(path)), languages)
+        emit(channel, GzipDecompressorStream(open(path)), languages, monitor)
     end
-    startswith(path, "http") ? wets(URI(path); capacity, languages) : wets(URI(wetroot * path); capacity, languages) # COV_EXCL_LINE: live-network path
+    startswith(path, "http") ? wets(URI(path); capacity, languages, monitor) : wets(URI(wetroot * path); capacity, languages, monitor) # COV_EXCL_LINE: live-network path
 end
 
 # COV_EXCL_START: live Common Crawl network overload
-function wets(index::URI; capacity=Threads.nthreads() * 10, languages=nothing)
+function wets(index::URI; capacity=Threads.nthreads() * 10, languages=nothing, monitor=nothing)
     Channel{WET{urilimit,contentlimit,languagelimit}}(capacity) do channel
         HTTP.open("GET", string(index)) do stream
-            HTTP.startread(stream)
-            emit(channel, GzipDecompressorStream(BufferedInputStream(stream)), languages)
+            response = HTTP.startread(stream)
+            response.status == 200 || return
+            emit(channel, GzipDecompressorStream(BufferedInputStream(stream)), languages, monitor)
         end
     end
 end
 # COV_EXCL_STOP
 
-function wets(paths::Channel{T}; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/", languages=nothing) where {T}
+function wets(paths::Channel{T}; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/", languages=nothing, monitor=nothing) where {T}
     Channel{WET{urilimit,contentlimit,languagelimit}}(capacity) do channel
         # Each worker pulls whole files from `paths` and decompresses+parses them concurrently
         # into the shared channel, overlapping per-file network I/O and CPU. Records from
         # different files interleave, which downstream stages tolerate (order-independent).
         @sync for _ in 1:Threads.nthreads()
             Threads.@spawn for path in paths
+                (pipelineactive(monitor) && isopen(channel)) || break
                 HTTP.open("GET", wetroot * path) do stream
                     HTTP.startread(stream)
-                    emit(channel, GzipDecompressorStream(BufferedInputStream(stream)), languages)
+                    emit(channel, GzipDecompressorStream(BufferedInputStream(stream)), languages, monitor)
                 end
+            end
+        end
+    end
+end
+
+function wets(path::AbstractString, retryconfig::AbstractDict; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/", languages=nothing, monitor=nothing)
+    isfile(path) && return wets(path; capacity, languages, monitor)
+    startswith(path, "http") ? wets(URI(path), retryconfig; capacity, languages, monitor) : wets(URI(wetroot * path), retryconfig; capacity, languages, monitor)
+end
+
+# Configured live-network overload. The retry layer restarts an idempotent GET after a
+# recoverable connection/EOF failure, before the archive parser sees a partial gzip stream.
+function wets(index::URI, retryconfig::AbstractDict; capacity=Threads.nthreads() * 10, languages=nothing, monitor=nothing)
+    Channel{WET{urilimit,contentlimit,languagelimit}}(capacity) do channel
+        HTTP.request("GET", string(index); body=UInt8[], iofunction=stream -> begin
+            response = HTTP.startread(stream)
+            response.status == 200 || return
+            emit(channel, GzipDecompressorStream(BufferedInputStream(stream)), languages, monitor)
+        end, retry=true, retries=retryconfig["retries"],
+        retry_delays=Base.ExponentialBackOff(n=retryconfig["retries"], factor=retryconfig["factor"]))
+    end
+end
+
+function wets(paths::Channel{T}, retryconfig::AbstractDict; capacity=Threads.nthreads() * 10, wetroot="https://data.commoncrawl.org/", languages=nothing, monitor=nothing) where {T}
+    Channel{WET{urilimit,contentlimit,languagelimit}}(capacity) do channel
+        @sync for _ in 1:Threads.nthreads()
+            Threads.@spawn for path in paths
+                (pipelineactive(monitor) && isopen(channel)) || break
+                HTTP.request("GET", wetroot * path; body=UInt8[], iofunction=stream -> begin
+                    response = HTTP.startread(stream)
+                    response.status == 200 || return
+                    emit(channel, GzipDecompressorStream(BufferedInputStream(stream)), languages, monitor)
+                end, retry=true, retries=retryconfig["retries"],
+                retry_delays=Base.ExponentialBackOff(n=retryconfig["retries"], factor=retryconfig["factor"]))
             end
         end
     end
@@ -118,13 +154,13 @@ end
 
 # --- Processing Pipeline ---
 
-function emit(channel, stream::IO, languages)
+function emit(channel, stream::IO, languages, monitor)
     line, buffer = Vector{UInt8}(), Vector{UInt8}(undef, contentlimit)
     sizehint!(line, 256)
-    while !isnothing(readinto!(line, stream))
+    while pipelineactive(monitor) && !isnothing(readinto!(line, stream))
         matches(line, firstindex(line), warcprefix) || continue
         entry = parserecord(line, buffer, stream, languages)
-        isnothing(entry) || put!(channel, entry)
+        isnothing(entry) || (pipelineactive(monitor) && isopen(channel) && put!(channel, entry))
     end
 end
 

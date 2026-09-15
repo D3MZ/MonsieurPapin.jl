@@ -3,6 +3,7 @@ using CodeComplexity
 using MonsieurPapin
 using Test
 using HTTP: URI
+using TOML
 
 one(_) = 1
 
@@ -38,11 +39,12 @@ include("llm.jl")
     uris = wetpaths(wetpath)
 
     Aqua.test_all(MonsieurPapin; stale_deps=false, deps_compat=false)
-    @test isempty(check_complexity(joinpath(dirname(@__DIR__), "src"); max_complexity=13, throw_on_violation=false))
+    qualitysettings = TOML.parsefile(joinpath(dirname(@__DIR__), "settings.toml"))
+    @test isempty(check_complexity(joinpath(dirname(@__DIR__), "src"); max_complexity=qualitysettings["quality"]["max_complexity"], throw_on_violation=false))
 
-    if get(ENV, "MONSIEURPAPIN_BENCHMARK", "false") == "true"
-        using BenchmarkTools
-        path = joinpath(dirname(@__DIR__), "data", "warc.wet.gz")
-        display(@benchmark sum(_ -> 1, wets($path)))
-    end
+    sourcefiles = filter(path -> endswith(path, ".jl"), readdir(joinpath(dirname(@__DIR__), "src"); join=true))
+    source = join(read.(sourcefiles, String), "\n")
+    @test !occursin(r"\bcatch\b", source)
+    @test !occursin(r"\bhaskey\s*\(", source)
+    @test !occursin(r"\bget\s*\([^;,\n]+,[^;,\n]+,", source)
 end

@@ -127,8 +127,10 @@ end
 function Base.put!(list::BoundedPriorityQueue, item)
     lock(list.available)
     try
-        insert!(list, item)
-        notify(list.available)
+        if list.open
+            insert!(list, item)
+            notify(list.available)
+        end
     finally
         unlock(list.available)
     end
@@ -165,3 +167,50 @@ function Base.iterate(list::BoundedPriorityQueue, ::Nothing=nothing)
     isnothing(item) ? nothing : (item, nothing)
 end
 Base.IteratorSize(::Type{<:BoundedPriorityQueue}) = Base.SizeUnknown()
+
+function removeat!(list::BoundedPriorityQueue, slot::Int)
+    delete!(list.worst, list.worsth[slot])
+    delete!(list.best, list.besth[slot])
+    push!(list.free, slot)
+    syncthreshold!(list)
+    list
+end
+
+mutable struct SimHashQueue{T}
+    queue::BoundedPriorityQueue{T}
+    hashes::Dict{UInt64,Int}
+    slots::Vector{UInt64}
+end
+
+SimHashQueue{T}(capacity::Integer) where {T} =
+    SimHashQueue{T}(BoundedPriorityQueue{T}(capacity, Reverse), Dict{UInt64,Int}(), UInt64[])
+
+function insert!(list::SimHashQueue{T}, hash::UInt64, item::T) where {T}
+    if hash in keys(list.hashes)
+        slot = list.hashes[hash]
+        isbetter(list.queue, item, list.queue.items[slot]) || return list
+        removeat!(list.queue, slot)
+        delete!(list.hashes, hash)
+    elseif isfull(list.queue)
+        slot = first(list.queue.worst)
+        isbetter(list.queue, item, list.queue.items[slot]) || return list
+        delete!(list.hashes, list.slots[slot])
+        removeat!(list.queue, slot)
+    end
+    slot = slot!(list.queue, item)
+    pushslot!(list.queue, slot)
+    if slot > length(list.slots)
+        push!(list.slots, hash)
+    else
+        list.slots[slot] = hash
+    end
+    list.hashes[hash] = slot
+    list
+end
+
+Base.length(list::SimHashQueue) = length(list.queue)
+Base.isempty(list::SimHashQueue) = isempty(list.queue)
+function Base.iterate(list::SimHashQueue, ::Nothing=nothing)
+    item = pop!(list.queue)
+    item === nothing ? nothing : (item, nothing)
+end

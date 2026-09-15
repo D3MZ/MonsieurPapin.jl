@@ -15,13 +15,34 @@
 - No empty string returns — if data is missing, let it error
 
 ## Settings
-- All configuration lives in `settings.toml` at the project root
-- Loaded via `loadsettings()` which returns a plain `Dict`
-- Access with `settings["section"]["key"]` — never with fallback defaults
+- All configuration lives in `settings.toml` at the project root.
+- Parse configuration exactly once at the outer boundary with `TOML.parse` or `TOML.parsefile`, then
+  pass the parsed data or relevant sections into the pipeline. Library functions must not load settings.
+- The parsed TOML data remains a plain `Dict`; do not introduce a monolithic settings type solely for
+  configuration. Use dispatch on the relevant runtime/data types where behavior differs.
+- Access required values with `settings["section"]["key"]` — never use fallback defaults or repeat
+  configuration validation inside downstream functions.
 
 ## No helper wrappers for simple API calls
 - Use `request()` directly instead of wrapping in convenience functions
 - Each caller provides its own prompts inline or from `settings["prompts"]`
+
+## Configuration and LLM backend preferences
+- Do not hard-code operational parameters. Put providers, models, endpoints, transports, process/session
+  lifecycles, concurrency, polling intervals, usage thresholds, time limits, and file/record bounds in
+  `settings.toml`.
+- Group equivalent controls under one configuration umbrella. Local LLM endpoints and Pi/Codex subscription
+  access are backends of the same LLM subsystem, not separate feature paths with separate concurrency or
+  run-limit levers.
+- Backend lifecycle is an implementation detail: a persistent Pi process, a per-call process, and an HTTP
+  request must expose the same logical LLM-call interface and accounting semantics.
+- The shared LLM concurrency setting defines the maximum number of simultaneous logical calls for every
+  backend. N parallel calls may be implemented with N persistent workers, N processes, or another transport,
+  but must not change observable behavior or introduce a second backend-specific concurrency control.
+- Put backend-specific protocol details beneath the shared LLM configuration only when the protocol requires
+  them; do not duplicate general settings such as model, concurrency, retries, limits, or usage monitoring.
+- Provider and model selection must be configuration-driven; never hard-code a subscription provider or model
+  in Julia code or tests.
 
 ## LLM
 - `request()` in `src/llm.jl` sends POST to OpenAI-compatible API, returns parsed JSON

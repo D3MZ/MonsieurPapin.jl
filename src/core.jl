@@ -1,35 +1,50 @@
-loadsettings(path="settings.toml") = TOML.parsefile(path)
-
 # --- Waterfall stages ---
 # Each stage transforms an iterable of WET pages, dispatching on the strategy argument: the
 # subject (pages) is inferred from the element type, the criterion from the strategy. Cheap
 # stages feed slower ones, and every stage is a bounded priority queue, so memory stays fixed
 # and only the strongest survivors reach the expensive stages.
 
-"""
-    unique(seen::SeenSet, source) -> Channel
+# WET producers and every waterfall stage share this admission signal. `nothing` keeps the public
+# stream APIs independent of the LLM monitor; research passes UsageMonitor so quota exhaustion
+# stops new work all the way back at the live WET index.
+pipelineactive(::Nothing) = true
+pipelineactive(monitor) = admit(monitor)
 
-Deduplication. Streams `source` (a `Channel` or any iterable stage, e.g. the keyword
-shortlist), dropping near-duplicates that fall inside `seen`'s SimHash window.
 """
-function Base.unique(seen::SeenSet, source)
+    unique(seen::SeenSet, source; batchsize, monitor) -> Channel
+
+Windowed score-aware deduplication. Each bounded input window is retained in a `SimHashQueue`
+and emitted best-first as soon as that window fills; this preserves the strongest duplicate within
+the window without holding the entire live crawl behind an end-of-stream barrier. A later window
+is a new deduplication horizon, which is the explicit tradeoff for live downstream flow.
+"""
+function emitwindow!(novel, candidates, monitor)
+    for wet in candidates
+        (pipelineactive(monitor) && isopen(novel)) || break
+        put!(novel, wet)
+    end
+    nothing
+end
+
+function Base.unique(seen::SeenSet, source; batchsize=seen.capacity, monitor=nothing)
     T = eltype(source)
-    Channel{T}(Threads.nthreads() * 10; spawn=true) do novel
-        # SimHash (CPU-bound) runs in parallel across workers; only the cheap seen-set check is
-        # serialized under a lock. Each worker owns its scratch/accumulator. Which of two
-        # near-duplicates survives is nondeterministic, but downstream is order-independent.
-        guard = ReentrantLock()
-        @sync for _ in 1:Threads.nthreads()
-            Threads.@spawn begin
-                scratch = Ref{T}()
-                counts = Vector{Int32}(undef, 64)
-                for wet in source
-                    hash = simhash(wet, scratch, counts)
-                    duplicate = lock(() -> seen!(seen, hash), guard)
-                    duplicate || put!(novel, wet)
-                end
+    windowcapacity = min(seen.capacity, batchsize)
+    Channel{T}(windowcapacity; spawn=true) do novel
+        candidates = SimHashQueue{T}(windowcapacity)
+        scratch = Ref{T}()
+        counts = Vector{Int32}(undef, 64)
+        count = 0
+        for wet in source
+            (pipelineactive(monitor) && isopen(novel)) || break
+            insert!(candidates, simhash(wet, scratch, counts), wet)
+            count += 1
+            if count == batchsize
+                emitwindow!(novel, candidates, monitor)
+                candidates = SimHashQueue{T}(windowcapacity)
+                count = 0
             end
         end
+        emitwindow!(novel, candidates, monitor)
     end
 end
 
@@ -39,7 +54,7 @@ end
 Keyword selection. Scores each page by keyword match and keeps the top `capacity` that match
 at least one keyword, evicting the weakest as stronger pages arrive.
 """
-function select(matcher::AC, source; capacity, minmatches=1)
+function select(matcher::AC, source; capacity, minmatches=1, monitor=nothing)
     shortlist = BoundedPriorityQueue{eltype(source)}(capacity, Reverse)
     Threads.@spawn begin
         # The whole stream flows through keyword scoring, so it must keep up with network intake
@@ -51,6 +66,7 @@ function select(matcher::AC, source; capacity, minmatches=1)
                 Threads.@spawn begin
                     scratch = Ref{eltype(source)}()  # reused box: score each WET without allocating
                     for wet in source
+                        (pipelineactive(monitor) && isopen(shortlist)) || break
                         value = score(matcher, wet, scratch)
                         # Require at least `minmatches` keyword hits: a page tripped by one incidental
                         # common word ("trend", "support") is dropped, so only keyword-dense pages flow
@@ -71,32 +87,33 @@ function select(matcher::AC, source; capacity, minmatches=1)
 end
 
 """
-    select(query::Embedding, source; capacity, batchsize) -> BoundedPriorityQueue
+    select(query::Embedding, source; capacity, threshold, batchsize) -> BoundedPriorityQueue
 
 Embedding selection. Batches pages through the embedding model and keeps the top `capacity`
 nearest the query, spreading batches across all threads.
 """
-function select(query::Embedding, source; capacity, batchsize=64, workers=max(1, Threads.nthreads() ÷ 2))
+function select(query::Embedding, source; capacity, threshold, batchsize=64, workers=max(1, Threads.nthreads() ÷ 2), monitor=nothing)
     shortlist = BoundedPriorityQueue{eltype(source)}(capacity)  # Forward: lower distance is better
     Threads.@spawn begin
         # Embedding is CPU-bound (Rust matmul) but only feeds the bounded shortlist that drains
         # into the much slower LLM, so it needs only a few workers. Spawning one per thread starves
         # the network-bound parse/decompress stages of cores and throttles ingest below line rate.
-        tasks = map(_ -> Threads.@spawn(embed!(shortlist, query, source, batchsize)), 1:workers)
+        tasks = map(_ -> Threads.@spawn(embed!(shortlist, query, source, batchsize, threshold, monitor)), 1:workers)
         foreach(wait, tasks)
         close(shortlist)
     end
     shortlist
 end
 
-function embed!(shortlist::BoundedPriorityQueue{T}, query::Embedding, source, batchsize) where {T}
+function embed!(shortlist::BoundedPriorityQueue{T}, query::Embedding, source, batchsize, threshold, monitor) where {T}
     handle!(query) # load query.model once before spawning; each worker gets its own scratch below
     scratch = _M2V.Scratch(query.model) # one per worker task -- see score!'s explicit-scratch note
     batch, scores, pointers, lengths = T[], Float64[], UInt[], UInt[]
     flush!() = (score!(scores, pointers, lengths, query, batch, scratch);
-                foreach(i -> put!(shortlist, rescore(batch[i], scores[i])), eachindex(batch));
+                foreach(i -> isrelevant(scores[i]; threshold) && pipelineactive(monitor) && isopen(shortlist) && put!(shortlist, rescore(batch[i], scores[i])), eachindex(batch));
                 empty!(batch))
     for wet in source
+        (pipelineactive(monitor) && isopen(shortlist)) || break
         push!(batch, wet)
         length(batch) == batchsize && flush!()
     end
@@ -119,35 +136,30 @@ function informative(finding::AbstractString)
                                    "no findings", "nothing", "no strategy", "no trading strategy")
 end
 
-function extract(source, settings, system, instruction, render; mode="a",
-                 workers=get(settings["llm"], "parallel", 4))
-    pages = Threads.Atomic{Int}(0); written = Threads.Atomic{Int}(0); t0 = time()
+function extract(source, client::LLMBackend, output::AbstractDict, system, instruction, render;
+                 mode, workers, monitor)
+    pages = Threads.Atomic{Int}(0)
+    written = Threads.Atomic{Int}(0)
+    t0 = time()
     filelock = ReentrantLock()
-    open(settings["output"]["path"], mode) do file
-        # Drain the shortlist with `workers` concurrent LLM calls (the LLM is the finding-rate
-        # bottleneck; the local server batches several in parallel). take! is thread-safe, so each
-        # worker pulls a distinct best-available page; the file write is serialized under a lock.
+    open(output["path"], mode) do file
         @sync for _ in 1:workers
             Threads.@spawn for wet in source
-              try   # no single page may abort an 80-hour extraction
-                ts = time()
-                finding = try   # one slow/timed-out page must not abort extraction
-                    message(request(; model=settings["llm"]["model"], systemprompt=system,
-                        input=string(instruction, "\n\n", render(wet)),
-                        baseurl=settings["llm"]["baseurl"], path=settings["llm"]["path"],
-                        password=settings["llm"]["password"], timeout=settings["llm"]["timeout"],
-                        thinking=get(settings["llm"], "thinking", false)))
-                catch err
-                    # Log only the error type, never the response body: a 500 echoes the (possibly
-                    # malformed) request back, and rendering invalid bytes in the log is a crash risk.
-                    @warn "extract LLM call failed; skipping page" error=string(typeof(err)) # COV_EXCL_LINE
-                    ""
+                if !admit(monitor)
+                    close(source)
+                    break
                 end
+                ts = time()
+                attempt!(monitor)
+                response = request(client, system, string(instruction, "\n\n", render(wet)))
+                record!(monitor, response)
+                finding = message(response)
                 p = Threads.atomic_add!(pages, 1) + 1
                 ok = informative(finding)
                 if ok
                     lock(filelock) do
-                        write(file, strip(finding), "\n\n"); flush(file)
+                        write(file, strip(finding), "\n\n")
+                        flush(file)
                     end
                     Threads.atomic_add!(written, 1)
                 end
@@ -156,9 +168,6 @@ function extract(source, settings, system, instruction, render; mode="a",
                                 "informative=$ok rate=$(round(w/max(time()-t0,1)*3600;digits=0))/hr " *
                                 "dist=$(round(wet.score;digits=3)) uri=$(first(uri(wet),70))")
                 flush(stderr)
-              catch err
-                @warn "extract: skipping page after unexpected error" error=string(typeof(err)) # COV_EXCL_LINE
-              end
             end
         end
     end
@@ -177,40 +186,23 @@ prompt(wet::WET, ::Val{:local}) = string("SOURCE URL: ", uri(wet), "\nLANGUAGE: 
 
 # A `*.paths.gz` index lists many WET files for a whole crawl; stream them concurrently across
 # workers (`wets(::Channel)`). A direct WET file or URL is parsed as records on its own.
-function wetstream(settings)
-    path = settings["crawl"]["path"]
-    capacity = settings["pipeline"]["capacity"]
-    root = settings["crawl"]["root"]
-    languages = settings["crawl"]["languages"]
+function wetstream(crawl::AbstractDict, pipelineconfig::AbstractDict; monitor=nothing)
+    path = crawl["path"]
+    capacity = pipelineconfig["capacity"]
+    root = crawl["root"]
+    languages = crawl["languages"]
     endswith(path, "paths.gz") ?
-        wets(wetpaths(path); capacity, wetroot=root, languages) :
-        wets(path; capacity, wetroot=root, languages)
+        wets(wetpaths(path, crawl["retry"]; monitor), crawl["retry"]; capacity, wetroot=root, languages, monitor) :
+        wets(path, crawl["retry"]; capacity, wetroot=root, languages, monitor)
 end
 
-# The shared pipeline: keyword -> dedup -> embedding, all bounded priority queues. Keyword
-# scoring (the cheapest filter) runs first to shrink the stream, then near-duplicates are
-# dropped, then survivors are ranked by embedding similarity. With no keywords the keyword
-# stage is skipped and the full stream is deduplicated before the embedding selection.
-pipeline(source, seen, ac, query, capacity; minmatches=1) =
-    select(query, unique(seen, isnothing(ac) ? source : select(ac, source; capacity, minmatches)); capacity)
+pipeline(source, seen, ::Nothing, query, capacity; minmatches, threshold, monitor, dedupe_batchsize) =
+    select(query, unique(seen, source; batchsize=dedupe_batchsize, monitor); capacity, threshold, monitor)
+pipeline(source, seen, matcher::AC, query, capacity; minmatches, threshold, monitor, dedupe_batchsize) =
+    select(query, unique(seen, select(matcher, source; capacity, minmatches, monitor); batchsize=dedupe_batchsize, monitor); capacity, threshold, monitor)
 
-# Fetch the seed pages tolerantly: a dead/blocked URL is logged and skipped rather than aborting
-# the whole run (`fetchtext` has no retry and throws on failure).
-function seedtext(urls)
-    pages = String[]
-    for url in urls
-        try
-            push!(pages, fetchtext(url))
-        catch err
-            @warn "Seed fetch failed; skipping." url exception=(err, catch_backtrace())
-        end
-    end
-    join(filter(!isempty, pages), "\n\n")
-end
+seedtext(urls, retryconfig::AbstractDict) = join(fetchtext.(urls, Ref(retryconfig)), "\n\n")
 
-# Normalize the LLM's keyword list into atomic AC patterns. The model is inconsistent: sometimes it
-# packs all language variants of one concept into a single comma/slash-joined string (which would
-# become one pattern that never matches), so split on separators, trim, drop junk, and dedupe.
 function cleankeywords(raw)
     out = String[]
     for item in raw
@@ -222,94 +214,135 @@ function cleankeywords(raw)
     unique(out)
 end
 
-# Build the per-language keyword filter, assembling each language from the first available of three
-# sources so the expensive LLM step only runs for what is genuinely missing:
-#   1. [crawl.manual_keywords] in settings.toml — terms a user hand-curates for their own native
-#      language(s); used verbatim, never regenerated or overwritten.
-#   2. the keyword cache file (pipeline.keyword_cache, JSON {lang => [terms]}) — keywords generated
-#      on a previous run, so reruns skip the build entirely. Users may also hand-edit this file.
-#   3. LLM generation, ONE call per language, fanned out over a Channel with `llm.parallel` workers.
-#      Per-language calls (vs. batches) stop the model collapsing to a dominant language, which is how
-#      low-resource languages lost coverage before. Newly generated languages are written to the cache.
-# The Channel makes the worker count purely a function of config: parallel=1 drains it sequentially,
-# parallel>1 fans out, with no other change.
-function languagekeywords(settings, article)
-    langs = settings["crawl"]["languages"]
-    manual = get(settings["crawl"], "manual_keywords", Dict{String,Any}())
-    cachepath = get(settings["pipeline"], "keyword_cache", "")
-    cache = (!isempty(cachepath) && isfile(cachepath)) ? JSON.parse(read(cachepath, String)) : Dict{String,Any}()
+function languagekeywords(crawl::AbstractDict, pipelineconfig::AbstractDict,
+                          client::LLMBackend, prompts::AbstractDict, llmconfig::AbstractDict, article, monitor)
+    langs = crawl["languages"]
+    manual = crawl["manual_keywords"]
+    cachepath = pipelineconfig["keyword_cache"]
+    cache = isfile(cachepath) ? JSON.parse(read(cachepath, String)) : Dict{String,Any}()
     result = Dict{String,Vector{String}}()
-    todo = String[]
-    for l in langs
-        if haskey(manual, l) && !isempty(manual[l])
-            result[l] = String.(manual[l])
-        elseif haskey(cache, l) && !isempty(cache[l])
-            result[l] = String.(cache[l])
-        else
-            push!(todo, l)
-        end
+    for (language, terms) in manual
+        result[language] = String.(terms)
     end
+    for (language, terms) in cache
+        result[language] = String.(terms)
+    end
+    todo = setdiff(langs, collect(keys(result)))
     if !isempty(todo)
-        @info "Generating keyword filter" generate=length(todo) reused=length(langs) - length(todo)
-        workers = max(1, get(settings["llm"], "parallel", 1))
         jobs = Channel{String}(length(todo))
-        foreach(l -> put!(jobs, l), todo); close(jobs)
-        lk = ReentrantLock()
-        @sync for _ in 1:workers
-            Threads.@spawn for l in jobs
-                kw = cleankeywords(extractkeywords(settings, article; limitinput=6_000, timeout=900, langs=[l]))
-                lock(lk) do; result[l] = kw end
+        foreach(language -> put!(jobs, language), todo)
+        close(jobs)
+        guard = ReentrantLock()
+        @sync for _ in 1:llmconfig["parallel"]
+            Threads.@spawn for language in jobs
+                terms = cleankeywords(extractkeywords(client, prompts, article;
+                    limitinput=llmconfig["keyword_input_limit"], timeout=llmconfig["timeout"], langs=[language], monitor=monitor))
+                lock(guard) do
+                    result[language] = terms
+                end
             end
         end
-        if !isempty(cachepath)
-            merged = merge(cache, Dict{String,Any}(l => result[l] for l in todo))
-            open(io -> write(io, JSON.json(merged)), cachepath, "w")
-        end
+        merged = merge(cache, Dict{String,Any}(language => result[language] for language in todo))
+        open(io -> write(io, JSON.json(merged)), cachepath, "w")
     end
-    cleankeywords(reduce(vcat, [get(result, l, String[]) for l in langs]; init=String[]))
+    keywords = cleankeywords(reduce(vcat, (result[language] for language in langs); init=String[]))
+    @info "Keyword language sweep complete." languages=length(langs) populated=length(result) keywords=length(keywords)
+    keywords
 end
 
-# Bootstrap the keyword matcher and the semantic query from the seed URLs (README flow). Guards make
-# a silent degrade impossible: an empty seed list, all-empty fetches, or zero keywords each raise
-# instead of quietly skipping a stage. A non-empty `pipeline.keywords` overrides everything verbatim;
-# otherwise keywords come from languagekeywords (manual config + cache + per-language LLM generation).
-function bootstrap(settings)
-    seeds = settings["pipeline"]["seeds"]
-    isempty(seeds) && error("pipeline.seeds is empty: seed URLs are required to bootstrap keywords + query.")
-    article = seedtext(seeds)
-    isempty(strip(article)) && error("all seed fetches returned empty; cannot bootstrap (seeds=$seeds).")
-    manual = get(settings["pipeline"], "keywords", String[])
-    keywords = isempty(manual) ? languagekeywords(settings, article) : cleankeywords(manual)
-    length(keywords) < 10 && error("only $(length(keywords)) keywords after bootstrap; check keywords_system prompt or the LLM server.")
-    # The semantic query is the clean multilingual keyword vocabulary itself, NOT the raw seed
-    # article: article text is polluted with page chrome (nav/boilerplate) and fails to rank trading
-    # pages above unrelated ones. Keyword-joined query separates trading (~0.6-0.8) from junk (~1.0).
-    query = embedding(join(keywords, " "); vecpath=settings["embedding"]["model"])
-    @info "Bootstrap complete." seeds=length(seeds) articlechars=length(article) nkeywords=length(keywords) keywords
+function bootstrap(crawl::AbstractDict, pipelineconfig::AbstractDict, embeddingconfig::AbstractDict,
+                   client::LLMBackend, llmconfig::AbstractDict, prompts::AbstractDict, monitor)
+    seeds = pipelineconfig["seeds"]
+    article = seedtext(seeds, crawl["retry"])
+    manual = pipelineconfig["keywords"]
+    keywords = isempty(manual) ? languagekeywords(crawl, pipelineconfig, client, prompts, llmconfig, article, monitor) : cleankeywords(manual)
+    query = embedding(join(keywords, " "); vecpath=embeddingconfig["model"])
+    @info "Bootstrap complete." seeds=length(seeds) languages=length(crawl["languages"]) articlechars=length(article) nkeywords=length(keywords) keywords
     (AC(keywords), query)
 end
 
-function research(settings)
-    capacity = settings["pipeline"]["capacity"]
-    seen = SeenSet(settings["pipeline"]["dedupe_capacity"])
-    matcher, query = bootstrap(settings)
-    minmatches = get(settings["pipeline"], "min_keywords", 1)
-    best = pipeline(wetstream(settings), seen, matcher, query, capacity; minmatches)
-    Threads.@spawn begin
-        extract(best, settings, settings["prompts"]["system"], settings["prompts"]["input"], prompt; mode="w")
-        @info "Research complete." outputpath=settings["output"]["path"]
+function research(settings::AbstractDict)
+    research(settings["crawl"], settings["pipeline"], settings["embedding"], settings["llm"],
+             settings["output"], settings["prompts"])
+end
+
+function research(crawl::AbstractDict, pipelineconfig::AbstractDict, embeddingconfig::AbstractDict,
+                  llmconfig::AbstractDict, output::AbstractDict, prompts::AbstractDict)
+    client = llm(llmconfig)
+    transferred = false
+    try
+        usage_monitor = monitor(llmconfig)
+        try
+            capacity = pipelineconfig["capacity"]
+            seen = SeenSet(pipelineconfig["dedupe_capacity"])
+            matcher, query = bootstrap(crawl, pipelineconfig, embeddingconfig, client, llmconfig, prompts, usage_monitor)
+            source = wetstream(crawl, pipelineconfig; monitor=usage_monitor)
+            best = pipeline(source, seen, matcher, query, capacity;
+                            minmatches=pipelineconfig["min_keywords"], threshold=pipelineconfig["threshold"],
+                            monitor=usage_monitor, dedupe_batchsize=pipelineconfig["dedupe_batchsize"])
+            task = Threads.@spawn begin
+                try
+                    extract(best, client, output, prompts["system"], prompts["input"], prompt;
+                            mode="w", workers=llmconfig["parallel"], monitor=usage_monitor)
+                    @info "Research complete." outputpath=output["path"]
+                finally
+                    try
+                        close(usage_monitor)
+                    finally
+                        close(client)
+                    end
+                end
+            end
+            transferred = true
+            task
+        finally
+            transferred || close(usage_monitor)
+        end
+    finally
+        transferred || close(client)
     end
 end
 
-function research(settings, urls::Vector{<:AbstractString}, wetpath::AbstractString)
-    Threads.@spawn begin
-        article = seed(urls)
-        capacity = settings["pipeline"]["capacity"]
-        seen = SeenSet(settings["pipeline"]["dedupe_capacity"])
-        source = wets(wetpath; capacity, languages=settings["crawl"]["languages"])
-        query = embedding(first(article, 2_000); vecpath=settings["embedding"]["model"])
-        best = pipeline(source, seen, AC(weights(article)), query, capacity)
-        extract(best, settings, settings["prompts"]["local_system"], settings["prompts"]["local_input"], wet -> prompt(wet, Val(:local)); mode="w")
-        @info "Local research complete." outputpath=settings["output"]["path"]
+function research(settings::AbstractDict, urls::Vector{<:AbstractString}, wetpath::AbstractString)
+    research(settings["crawl"], settings["pipeline"], settings["embedding"], settings["llm"],
+             settings["output"], settings["prompts"], urls, wetpath)
+end
+
+function research(crawl::AbstractDict, pipelineconfig::AbstractDict, embeddingconfig::AbstractDict,
+                  llmconfig::AbstractDict, output::AbstractDict, prompts::AbstractDict,
+                  urls::Vector{<:AbstractString}, wetpath::AbstractString)
+    client = llm(llmconfig)
+    transferred = false
+    try
+        usage_monitor = monitor(llmconfig)
+        try
+            capacity = pipelineconfig["capacity"]
+            seen = SeenSet(pipelineconfig["dedupe_capacity"])
+            task = Threads.@spawn begin
+                try
+                    article = seed(urls, crawl["retry"])
+                    source = wets(wetpath, crawl["retry"]; capacity, languages=crawl["languages"], monitor=usage_monitor)
+                    query = embedding(first(article, 2_000); vecpath=embeddingconfig["model"])
+                    best = pipeline(source, seen, AC(weights(article)), query, capacity;
+                                    minmatches=pipelineconfig["min_keywords"], threshold=pipelineconfig["threshold"],
+                                    monitor=usage_monitor, dedupe_batchsize=pipelineconfig["dedupe_batchsize"])
+                    extract(best, client, output, prompts["local_system"], prompts["local_input"], wet -> prompt(wet, Val(:local));
+                            mode="w", workers=llmconfig["parallel"], monitor=usage_monitor)
+                    @info "Local research complete." outputpath=output["path"]
+                finally
+                    try
+                        close(usage_monitor)
+                    finally
+                        close(client)
+                    end
+                end
+            end
+            transferred = true
+            task
+        finally
+            transferred || close(usage_monitor)
+        end
+    finally
+        transferred || close(client)
     end
 end

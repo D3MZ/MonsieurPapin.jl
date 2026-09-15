@@ -60,7 +60,7 @@ end
             vecpath = buildwordpiecefixture(joinpath(dir, "model"))
             source = embedding("cat dog"; vecpath)
             banana = embedding("banana"; vecpath)
-            records = collect(select(source, pages(); capacity=10))
+            records = collect(select(source, pages(); capacity=10, threshold=0.0))
             scores = map(wet -> wet.score, records)
 
             @test distance(source, "kitten dog") < distance(source, "banana")

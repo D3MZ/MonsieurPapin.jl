@@ -64,7 +64,7 @@ Reproduce with [test/benchmarks.jl](test/benchmarks.jl).
 ### Prerequisites
 
 - [Julia 1.12+](https://julialang.org/downloads/)
-- A local OpenAI-compatible chat server, such as [LM Studio](https://lmstudio.ai/)
+- Either a local OpenAI-compatible chat server (such as [LM Studio](https://lmstudio.ai/)) or authenticated `pi`/`codex` CLIs
 - About 200 MB of disk space for the embedding model, downloaded on first run
 
 A Rust toolchain is **not** required to run a crawl — keyword and embedding scoring both run
@@ -92,13 +92,17 @@ The pipeline will:
 - Score pages by weighted keyword match
 - Score candidates by embedding similarity
 - Send shortlisted pages to the configured LLM
-- Append extracted findings to `research.md`
+- Write extracted findings to `research.md` (overwriting it each run)
 
 ### Configure
 
 Edit `settings.toml` at the package root — all defaults live there including prompts, LLM connection, crawl source, and pipeline parameters.
 
-The LLM integration uses the OpenAI-compatible `/v1/chat/completions` endpoint and supports structured output via JSON schema (`response_format`). It works with LM Studio and any OpenAI-compatible server.
+The LLM integration supports two configured transports: `provider = "local"` uses the OpenAI-compatible `/v1/chat/completions` endpoint; `provider = "openai-codex"` starts one persistent `pi --mode rpc` process per `llm.parallel` worker and uses the authenticated Codex subscription. The Codex monitor starts `codex app-server`, calls `account/rateLimits/read` without consuming an LLM request, and appends JSONL samples to `settings["llm"]["usage"]["log"]` (default `usage.jsonl`) every five seconds. It records timestamps, logical calls, provider attempts, response usage, active windows, remaining percentages, and reset times. Extraction stops admitting new pages after a window rises by 10 percentage points from its run-start baseline; one in-flight call can finish beyond the threshold.
+
+Authenticate before a subscription run with the normal CLI commands (`pi` and `codex login`). Keep the command arrays and all runtime settings in `settings.toml`; library functions receive parsed dictionaries and do not load configuration themselves.
+
+The opt-in real-data check is `test/codex_integration.jl`; it reads two actual WET paths from the configured `wet.paths.gz` index and is never part of ordinary CI. Run it only on an authenticated machine with the explicit enable argument: `julia --project=. test/codex_integration.jl run`. It retains `integration/research.md` and `integration/usage.jsonl` (ignored by git) for inspection. On a headless z13, put the intended Node/Julia directories on `PATH` first and use `codex login --device-auth` (or an equivalent authenticated Codex login) before running it.
 
 For better local throughput, run Julia with more threads:
 
@@ -131,4 +135,4 @@ flowchart TD
     KF --> D
 ```
 
-**Key principles**: bounded priority queues evict the lowest-ranked candidate when full; expensive stages process the best survivors from the previous stage; near-duplicates within a SimHash window are dropped from the keyword shortlist before the expensive embedding and extraction stages. The **keyword filter is built per language** from three sources in priority order — a `manual_keywords` config override (used verbatim), a `keyword_cache.json` of previously-generated terms (so reruns skip the build and the file can be hand-edited), and otherwise one LLM call per language fanned out over a Channel (worker count = `llm.parallel`); the assembled vocabulary feeds both the keyword matcher and the embedding query.
+**Key principles**: bounded priority queues evict the lowest-ranked candidate when full; expensive stages process the best survivors from the previous stage; same-SimHash pages are resolved in a bounded priority queue, retaining the highest-scoring representative before the expensive embedding and extraction stages. The **keyword filter is built per language** from three sources in priority order — a `manual_keywords` config override (used verbatim), a `keyword_cache.json` of previously-generated terms (so reruns skip the build and the file can be hand-edited), and otherwise one LLM call per language fanned out over a Channel (worker count = `llm.parallel`); the assembled vocabulary feeds both the keyword matcher and the embedding query.

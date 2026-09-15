@@ -126,6 +126,7 @@ similarity(first::Embedding, wet::WET) = 1.0 - distance(first, wet)
 similarity(string1::AbstractString, string2::AbstractString; vecpath="minishlab/potion-multilingual-128M") =
     similarity(embedding(string1; vecpath), string2)
 
+isrelevant(distance::Real; threshold) = 1.0 - distance >= threshold
 isrelevant(first::Embedding, second::AbstractString; threshold=0.6) = similarity(first, second) >= threshold
 isrelevant(first::Embedding, second::Embedding; threshold=0.6) = similarity(first, second) >= threshold
 isrelevant(first::Embedding, wet::WET; threshold=0.6) = similarity(first, wet) >= threshold

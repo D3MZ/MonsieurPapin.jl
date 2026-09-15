@@ -19,11 +19,12 @@ duplicate detection. Pass it to `unique(seen, stream)` to drop pages already see
 window.
 """
 struct SeenSet
+    capacity::Int
     window::CircularBuffer{UInt64}
     seen::Set{UInt64}
 end
 
-SeenSet(capacity::Integer) = SeenSet(CircularBuffer{UInt64}(capacity), Set{UInt64}())
+SeenSet(capacity::Integer) = SeenSet(Int(capacity), CircularBuffer{UInt64}(capacity), Set{UInt64}())
 
 # True if `hash` was already present; otherwise records it (evicting the oldest when full).
 function seen!(set::SeenSet, hash::UInt64)

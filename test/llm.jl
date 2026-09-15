@@ -22,12 +22,26 @@ function llmserver(respond; seed="seed content")
 end
 
 testsettings(baseurl; languages=["eng"], outputpath="research.md", embeddingmodel="minishlab/potion-multilingual-128M") = Dict(
-    "crawl" => Dict("languages" => languages),
-    "pipeline" => Dict("capacity" => 100, "threshold" => 0.6, "dedupe_capacity" => 1000, "keywords" => String[]),
+    "crawl" => Dict("languages" => languages, "manual_keywords" => Dict{String,Any}(), "retry" => Dict("retries" => 0, "factor" => 3.0)),
+    "pipeline" => Dict("capacity" => 100, "threshold" => 0.6, "dedupe_capacity" => 1000, "dedupe_batchsize" => 10, "keywords" => String[], "keyword_cache" => tempname(), "min_keywords" => 1, "seeds" => String[]),
     "embedding" => Dict("model" => embeddingmodel),
-    "llm" => Dict("baseurl" => baseurl, "path" => "/v1/chat/completions", "model" => "qwen/qwen3.6-27b", "password" => "", "timeout" => 120),
+    "llm" => Dict("provider" => "local", "baseurl" => baseurl, "path" => "/v1/chat/completions", "model" => "qwen/qwen3.6-27b", "password" => "", "timeout" => 120, "thinking" => false, "keyword_input_limit" => 2000, "parallel" => 1),
     "output" => Dict("path" => outputpath),
     "prompts" => Dict("system" => "", "input" => "", "local_system" => "", "local_input" => "", "keywords_system" => "Extract keywords from this text.", "summary_system" => "Summarize this text."),
+)
+
+mutable struct BootstrapMonitor
+    calls::Int
+    responses::Vector{Dict{String,Any}}
+end
+
+struct BootstrapBackend <: LLMBackend end
+MonsieurPapin.admit(::BootstrapMonitor) = true
+MonsieurPapin.attempt!(monitor::BootstrapMonitor) = (monitor.calls += 1)
+MonsieurPapin.record!(monitor::BootstrapMonitor, response) = push!(monitor.responses, response)
+MonsieurPapin.request(::BootstrapBackend, systemprompt::String, input::String) = Dict(
+    "choices" => [Dict("message" => Dict("content" => "{\"keywords\":[\"breakout\"]}"))],
+    "usage" => Dict("input" => 3, "output" => 2, "cacheRead" => 1, "cacheWrite" => 0, "totalTokens" => 6),
 )
 
 excerpt(text, language="eng", score=0.0) = WET(
@@ -60,6 +74,17 @@ function wetpath(records...)
     path
 end
 
+@testset "bootstrap accounting" begin
+    mktempdir() do dir
+        vecpath = buildwordpiecefixture(joinpath(dir, "model"))
+        settings = testsettings("unused"; languages=["eng", "fra"], embeddingmodel=vecpath)
+        bootstrapmonitor = BootstrapMonitor(0, Dict{String,Any}[])
+        MonsieurPapin.bootstrap(settings["crawl"], settings["pipeline"], settings["embedding"], BootstrapBackend(), settings["llm"], settings["prompts"], bootstrapmonitor)
+        @test bootstrapmonitor.calls == 2
+        @test length(bootstrapmonitor.responses) == 2
+    end
+end
+
 @testset "llm" begin
     service = llmserver() do payload
         messages = payload["messages"]
@@ -80,6 +105,7 @@ end
             path=settings["llm"]["path"],
             password=settings["llm"]["password"],
             timeout=settings["llm"]["timeout"],
+            thinking=settings["llm"]["thinking"],
         )
         @test message(data) == "strategy"
         req = take!(service.requests)
@@ -95,6 +121,7 @@ end
             path=settings["llm"]["path"],
             password=settings["llm"]["password"],
             timeout=settings["llm"]["timeout"],
+            thinking=settings["llm"]["thinking"],
         )
         @test message(data) == "hallo"
         req = take!(service.requests)
@@ -114,12 +141,11 @@ end
 
     try
         settings = testsettings(translated.baseurl; languages=["fra"])
-        result = extractkeywords(settings, "seed article")
+        client = llm(settings["llm"])
+        result = extractkeywords(client, settings["prompts"], "seed article"; limitinput=settings["llm"]["keyword_input_limit"], timeout=settings["llm"]["timeout"], langs=settings["crawl"]["languages"], monitor=NoUsage())
         @test result == ["breakout", "trend"]
         req = take!(translated.requests)
         @test occursin("seed article", req["messages"][2]["content"])
-        @test !isnothing(req["response_format"])
-        @test req["response_format"]["json_schema"]["name"] == "keywords"
         @test !isready(translated.requests)
     finally
         close(translated.server)
@@ -131,7 +157,8 @@ end
 
     try
         settings = testsettings(unservice.baseurl; languages=["eng"])
-        result = MonsieurPapin.summarize(settings, "seed article")
+        client = llm(settings["llm"])
+        result = MonsieurPapin.summarize(client, settings["prompts"], "seed article"; limit=140)
         @test result == "a short summary"
         req = take!(unservice.requests)
         @test occursin("Summarize in at most 140 characters", req["messages"][2]["content"])
@@ -206,10 +233,10 @@ end
         settings["llm"]["parallel"] = 1
         settings["output"]["path"] = tempname()
         failure_prompt = MonsieurPapin.prompt(excerpt("strategy"))
-        task = @async extract([excerpt("strategy")], settings, settings["prompts"]["system"], settings["prompts"]["input"], failure_prompt; mode="w")
-        wait(task)
-        @test isfile(settings["output"]["path"])
-        @test isempty(read(settings["output"]["path"], String))
+        client = llm(settings["llm"])
+        task = @async extract([excerpt("strategy")], client, settings["output"], settings["prompts"]["system"], settings["prompts"]["input"], failure_prompt; mode="w", workers=1, monitor=NoUsage())
+        @test_throws TaskFailedException wait(task)
+        close(client)
     finally
         close(failing)
     end
@@ -222,11 +249,77 @@ end
         settings = testsettings(extraction.baseurl; languages=["eng"])
         settings["llm"]["parallel"] = 1
         settings["output"]["path"] = tempname()
-        task = @async extract(["strategy"], settings, settings["prompts"]["system"], settings["prompts"]["input"], _ -> "ignored"; mode="w")
+        client = llm(settings["llm"])
+        task = @async extract([excerpt("strategy")], client, settings["output"], settings["prompts"]["system"], settings["prompts"]["input"], _ -> "ignored"; mode="w", workers=1, monitor=NoUsage())
         wait(task)
         @test isfile(settings["output"]["path"])
         @test occursin("ok", read(settings["output"]["path"], String))
     finally
         close(extraction.server)
     end
+end
+
+@testset "persistent RPC" begin
+    script = joinpath(dirname(@__DIR__), "test", "fake_rpc.jl")
+    command = ["julia", "--startup-file=no", "--project=$(dirname(@__DIR__))", script]
+    rpcsettings = Dict("command" => command, "provider" => "test-provider", "model" => "test-model", "parallel" => 1, "timeout" => 10)
+    client = PiRPC(rpcsettings)
+    response = request(client, "system", "input")
+    @test message(response) == "rpc response"
+    configured = request(client, "system", "configured-rpc")
+    @test occursin("--provider test-provider --model test-model", message(configured))
+    close(client)
+
+    errorclient = PiRPC(Dict("command" => vcat(command, ["rpc-error"]), "provider" => "test-provider", "model" => "test-model", "parallel" => 1, "timeout" => 10))
+    @test_throws ErrorException request(errorclient, "system", "input")
+    close(errorclient)
+
+    timeoutclient = PiRPC(Dict("command" => vcat(command, ["rpc-timeout"]), "provider" => "test-provider", "model" => "test-model", "parallel" => 1, "timeout" => 0.01))
+    @test_throws ErrorException request(timeoutclient, "system", "input")
+    close(timeoutclient)
+
+    usagesettings = Dict(
+        "command" => command,
+        "initialize_method" => "initialize",
+        "initialized_method" => "initialized",
+        "initialize_params" => Dict("clientInfo" => Dict("name" => "test", "version" => "1")),
+        "timeout" => 10,
+        "method" => "account/rateLimits/read",
+        "params" => Dict(),
+        "limit_name" => "test-model",
+    )
+    server = CodexAppServer(usagesettings)
+    snapshot = usage(server, usagesettings)
+    @test snapshot["rateLimits"]["primary"]["usedPercent"] == 12
+    @test snapshot["rateLimitsByLimitId"]["test-limit"]["limitName"] == "test-model"
+    close(server)
+
+    logpath = tempname()
+    monitor = UsageMonitor(merge(usagesettings, Dict("interval" => 0.01, "drop" => 10, "log" => logpath)))
+    sleep(0.03)
+
+    MonsieurPapin.attempt!(monitor)
+    MonsieurPapin.record!(monitor, Dict("usage" => Dict(
+        "input" => 3, "output" => 2, "cacheRead" => 1, "cacheWrite" => 4, "totalTokens" => 10,
+        "cost" => Dict("input" => 0.3, "output" => 0.2, "cacheRead" => 0.1, "cacheWrite" => 0.4, "total" => 1.0),
+    )))
+    MonsieurPapin.attempt!(monitor)
+    MonsieurPapin.record!(monitor, Dict("usage" => Dict(
+        "input" => 7, "output" => 5, "cacheRead" => 2, "cacheWrite" => 6, "totalTokens" => 14,
+        "cost" => Dict("input" => 0.7, "output" => 0.5, "cacheRead" => 0.2, "cacheWrite" => 0.6, "total" => 2.0),
+    )))
+    close(monitor)
+    log = read(logpath, String)
+    @test count(==('\n'), log) >= 2
+    @test occursin("remainingPercent", log)
+    @test occursin("attempts", log)
+    entries = JSON.parse.(filter(!isempty, split(log, '\n')))
+    finalentry = entries[end]
+    @test finalentry["calls"] == 2
+    @test finalentry["usage"]["input"] == 10
+    @test finalentry["usage"]["output"] == 7
+    @test finalentry["usage"]["cacheRead"] == 3
+    @test finalentry["usage"]["cacheWrite"] == 10
+    @test finalentry["usage"]["totalTokens"] == 24
+    @test finalentry["usage"]["cost"]["total"] == 3.0
 end

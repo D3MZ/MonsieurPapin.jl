@@ -51,4 +51,6 @@ end
     foreach(value -> put!(shortlist, queued(value)), [0.5, 0.2, 0.8])
     close(shortlist)
     @test map(w -> w.score, collect(shortlist)) == [0.2, 0.5, 0.8]
+    put!(shortlist, queued(0.1))
+    @test isempty(shortlist)
 end

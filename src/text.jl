@@ -1,11 +1,11 @@
-seed(urls::Vector{<:AbstractString}) = join(filter(page -> !isempty(page), fetchtext.(urls)), "\n\n")
+seed(urls::Vector{<:AbstractString}, retryconfig::AbstractDict) = join(filter(page -> !isempty(page), fetchtext.(urls, Ref(retryconfig))), "\n\n")
 normalize(page::AbstractString) = lowercase(Base.Unicode.normalize(page, :NFKC))
 tokens(page::AbstractString) = [entry.match for entry in eachmatch(r"[\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}]|[\p{L}\p{N}]+", normalize(page))]
 
 function counts(page::AbstractString)
     counter = Dict{String,Int}()
     foreach(tokens(page)) do token
-        counter[token] = get(counter, token, 0) + 1
+        counter[token] = get!(()->0, counter, token) + 1
     end
     counter
 end

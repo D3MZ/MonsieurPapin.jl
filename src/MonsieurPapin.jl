@@ -6,9 +6,10 @@ import DataStructures: heapify!
 using HTTP: URI
 export URI
 export WET, BoundedPriorityQueue, SeenSet, AC, Embedding
-export wets, wetpaths, loadsettings, research, select, extract
+export wets, wetpaths, research, select, extract
 export embedding, distance, similarity, isrelevant, score, simhash
-export request, message, extractkeywords, summarize, fetchtext, plaintext, language, languages, prompt
+export LLMBackend, OpenAIEndpoint, PiRPC, CodexAppServer, UsageMonitor, NoUsage, llm, usage, request, message, extractkeywords, summarize
+export fetchtext, plaintext, language, languages, prompt
 
 
 include("wetpaths.jl")
@@ -20,7 +21,7 @@ include("http.jl")
 include("simhash.jl")
 include("queue.jl")
 include("text.jl")
-include("core.jl")
 include("llm.jl")
+include("core.jl")
 
 end

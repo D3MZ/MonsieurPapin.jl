@@ -26,10 +26,17 @@ languages = [
     "vol", "war", "wol", "xho", "yid", "yor", "zha", "zho", "zul",
 ]
 
+[crawl.retry]
+retries = 4
+factor = 3.0
+
 [pipeline]
 capacity = 1000
 threshold = 0.6
 dedupe_capacity = 100000
+# Flush this many keyword-selected pages per score-aware deduplication window so downstream
+# embedding and extraction begin while the live crawl is still arriving.
+dedupe_batchsize = 1000
 # Minimum distinct keyword hits for a page to enter the waterfall. Higher = more selective, so the
 # slow embedding stage is not flooded and download throughput is not throttled to embedding's rate.
 min_keywords = 4
@@ -55,11 +62,14 @@ seeds = [
 model = "minishlab/potion-multilingual-128M"
 
 [llm]
+provider = "openai-codex"
+model = "gpt-5.5"
+command = ["pi", "--mode", "rpc", "--no-session", "--no-tools", "--thinking", "off"]
 baseurl = "http://localhost:1234"
 path = "/v1/chat/completions"
-model = "google/gemma-4-12b-qat"
 password = ""
 timeout = 180
+keyword_input_limit = 6000
 # Concurrent LLM extraction calls (read by extract() as its worker count). Tuning is hardware AND
 # server-engine bound, and what matters is throughput on the REAL traffic mix, not a synthetic
 # always-long-output benchmark. On a single 24 GB GPU: llama.cpp + MTP speculative decoding gives
@@ -77,6 +87,28 @@ parallel = 1
 # chat_template_kwargs.enable_thinking=false; servers that don't understand it ignore it. Set
 # true only if you specifically want chain-of-thought.
 thinking = false
+
+[llm.usage]
+command = ["codex", "app-server", "--stdio"]
+initialize_method = "initialize"
+initialized_method = "initialized"
+initialize_params = { clientInfo = { name = "monsieurpapin", version = "1.0.0" } }
+method = "account/rateLimits/read"
+params = {}
+interval = 5
+# Consume nearly all of the remaining model-specific quota in this explicitly authorized run.
+drop = 90
+log = "usage.jsonl"
+# Select the model-specific window returned by rateLimitsByLimitId.
+limit_name = "GPT-5.3-Codex-Spark"
+
+[integration]
+# The standalone integration runner reads this many real archive paths from crawl.path.
+archives = 2
+output = "integration"
+
+[quality]
+max_complexity = 13
 
 [output]
 path = "research.md"
