@@ -11,7 +11,7 @@
 
 > A French Huguenot physicist, mathematician and inventor, best known for his pioneering invention of the steam digester, the forerunner of the pressure cooker, the steam engine, the centrifugal pump, and a submersible boat. — [Wikipedia](https://en.wikipedia.org/wiki/Denis_Papin)
 
-This ain't your ordinary digester: Search the entire internet, filter, extract, reduce, and summarize into a "research grade" markdown file on your computer in a day or your money back :P
+This ain't your ordinary digester: Search the entire internet, filter, extract, and reduce into a "research grade" markdown file on your computer in a day or your money back :P
 
 > [!IMPORTANT]
 > MonsieurPapin is in active pre-release development. See [TODO](TODO.md) before running long crawls.
@@ -39,13 +39,6 @@ Waterfall: each stage only sees the top candidates from the previous stage.
 
 Measured 8-thread scaling: deduplication **7.2×** (9,900 → 71,900 records/s), multi-file parsing **3.6×** (24,900 → 90,300 records/s, bandwidth-bound).
 
-Native-Julia kernels vs Rust, same dataset:
-
-| Kernel | vs Rust | Allocs (Julia vs Rust) |
-| --- | --- | --- |
-| [AhoCorasickILP.jl](https://github.com/D3MZ/AhoCorasickILP.jl) match kernel | **3.44×** faster (50.3 ms vs 173.2 ms, identical counts) | 0 vs 39,398 |
-| [Model2Vec.jl](https://github.com/D3MZ/Model2Vec.jl) vs retired Rust FFI bridge | **8.95×** faster, 0.9999999 score correlation | 0 (hot path) vs 3/call |
-| Model2Vec.jl vs no-FFI Rust reference, identical algorithm | **1.62×–3.20×** across both tokenizer families | — |
 
 `†` serial: queue mutates under one lock; LLM stage drains single-consumer.
 
@@ -57,7 +50,7 @@ Native-Julia kernels vs Rust, same dataset:
 
 `‡` Independent of keyword count K: one state transition per input byte regardless of automaton size; adding keywords costs only a one-time O(M) build.
 
-Reproduce with [test/benchmarks.jl](test/benchmarks.jl).
+Reproduce current measurements with [test/benchmarks.jl](test/benchmarks.jl); the historical Rust head-to-head claims are preserved in the [pre-cleanup benchmark source](https://github.com/D3MZ/MonsieurPapin.jl/blob/2a84795/test/benchmarks.jl).
 
 ## Quick Start
 
@@ -67,11 +60,7 @@ Reproduce with [test/benchmarks.jl](test/benchmarks.jl).
 - Either a local OpenAI-compatible chat server (such as [LM Studio](https://lmstudio.ai/)) or authenticated `pi`/`codex` CLIs
 - About 200 MB of disk space for the embedding model, downloaded on first run
 
-A Rust toolchain is **not** required to run a crawl — keyword and embedding scoring both run
-on native Julia ([AhoCorasickILP.jl](https://github.com/D3MZ/AhoCorasickILP.jl),
-[Model2Vec.jl](https://github.com/D3MZ/Model2Vec.jl)). It's only needed to reproduce the Rust-FFI
-comparison in [test/benchmarks.jl](test/benchmarks.jl)'s head-to-head tests — see
-`deps/model2vec_rs_worker`.
+Keyword and embedding scoring run on native Julia via [AhoCorasickILP.jl](https://github.com/D3MZ/AhoCorasickILP.jl) and [Model2Vec.jl](https://github.com/D3MZ/Model2Vec.jl); no Rust toolchain is required.
 
 Load a local chat model in your OpenAI-compatible server, for example `qwen/qwen3.6-27b`, and start it on port `1234`.
 

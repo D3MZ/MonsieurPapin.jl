@@ -108,55 +108,6 @@ end
         @test records_per_second >= 20_000
     end
 
-    @testset "Aho-Corasick head-to-head: native Julia (AhoCorasickILP) vs Rust crate" begin
-        # Proves the native-Julia matcher (src/ahocorasick.jl, backed by AhoCorasickILP.jl) matches
-        # the Rust crate's counts exactly and beats it on speed and allocations, over the same real
-        # WET record text and keywords (leftmost non-overlapping, ASCII case-insensitive). Measured
-        # on 21,465 records (~5 KB avg), Apple M1 Max: native 50.3 ms / 0 allocs vs Rust 173.2 ms /
-        # 39,398 allocs — 3.44x faster with identical counts (12,661). That result is why the Rust
-        # aho-corasick automaton was removed from the worker; the Rust side below therefore runs only
-        # if the former FFI automaton is still present, and is skipped once it has been refactored out.
-        keywords = ["trading", "strategy", "finance", "market", "portfolio", "yield",
-                    "торговая стратегия", "交易策略", "取引戦略", "استراتيجية التداول"]
-        texts = [content(wet) for wet in wets(wetspath)]
-        records = length(texts)
-
-        # native Julia automaton (production path through src/ahocorasick.jl)
-        native = AC(keywords)
-        nativecount(text) = MonsieurPapin.score(native, text)
-
-        # The Rust aho-corasick automaton only exists if it has not yet been removed from the worker.
-        MonsieurPapin.RustWorker.load()
-        rusthandle = try
-            MonsieurPapin.RustWorker.call(:build_aho_corasick, join(keywords, '\x1F'))
-        catch
-            nothing
-        end
-
-        nativebenchmark = @benchmark sum($nativecount, $texts) samples=1 seconds=5
-        display(nativebenchmark)
-        nativerate = round(records / (median(nativebenchmark).time / 1e9))
-
-        if rusthandle === nothing
-            @info "Aho-Corasick head-to-head (Rust automaton removed; native only)" records keywords = length(keywords) nativerate = nativerate nativeallocs = nativebenchmark.allocs
-            @test nativebenchmark.allocs == 0
-            @test nativerate >= 20_000
-        else
-            # Fastest Rust path (raw binding, no invokelatest) so the comparison is generous to Rust.
-            rustbinding = MonsieurPapin.RustWorker.binding(:match_aho_corasick)
-            rustcount(text) = GC.@preserve text Int(rustbinding(rusthandle, UInt(pointer(text)), UInt(ncodeunits(text))))
-            @test sum(nativecount, texts) == sum(rustcount, texts)   # identical counts
-            rustbenchmark = @benchmark sum($rustcount, $texts) samples=1 seconds=5
-            MonsieurPapin.RustWorker.call(:close_aho_corasick, rusthandle)
-            display(rustbenchmark)
-            rustrate = round(records / (median(rustbenchmark).time / 1e9))
-            speedup = round(median(rustbenchmark).time / median(nativebenchmark).time; digits=2)
-            @info "Aho-Corasick head-to-head" records keywords = length(keywords) nativerate = nativerate rustrate = rustrate speedup = speedup nativeallocs = nativebenchmark.allocs rustallocs = rustbenchmark.allocs
-            @test median(nativebenchmark).time <= median(rustbenchmark).time
-            @test nativebenchmark.allocs <= rustbenchmark.allocs
-        end
-    end
-
     @testset "Weighted Keyword Matching (Aho-Corasick; Multilingual)" begin
         weights = MonsieurPapin.weights(seedtext)
         benchmark = @benchmark sum(_ -> 1, (MonsieurPapin.score(ac, wet) for wet in wets($wetspath))) setup=(ac = AC($weights)) samples=1 seconds=5
@@ -225,77 +176,9 @@ end
         @test records_per_second >= 400
     end
 
-    @testset "Model2Vec head-to-head: native Julia (Model2Vec.jl) vs Rust FFI" begin
-        # Proves the native-Julia embedder (src/scoring.jl's `Embedding`, backed by Model2Vec.jl)
-        # correlates closely with the Rust FFI bridge's distances and beats it on speed, over the
-        # same real WET record content and query. Model2Vec.jl's Unigram backend now implements
-        # SentencePiece's Precompiled charsmap normalizer byte-for-byte, but the two backends are
-        # still separate encoders over messy crawled text, so the tolerance stays loose (records
-        # must correlate, not match to float precision) and the
-        # speed assertion is on aggregate throughput, not per-record exact equality. This result is
-        # why `Embedding` now uses Model2Vec.jl instead of RustWorker (see scoring.jl); the Rust
-        # side below therefore runs only if the former FFI model2vec path is still present in the
-        # worker, and is skipped once it has been refactored out -- mirroring the Aho-Corasick
-        # head-to-head test above, which already went through this same transition.
-        records = collect(wets(wetspath))
-
-        # native Julia embedder (production path through src/scoring.jl)
-        native = embedding("cat dog"; vecpath=model_source)
-        nativedistance(wet) = distance(native, wet)
-
-        # The Rust model2vec bridge only exists if it has not yet been removed from the worker.
-        MonsieurPapin.RustWorker.load()
-        rusthandle = try
-            MonsieurPapin.RustWorker.open(model_source, "cat dog")
-        catch
-            nothing
-        end
-
-        nativebenchmark = @benchmark sum($nativedistance, $records) samples=1 evals=1 seconds=30
-        display(nativebenchmark)
-        nativetime = median(nativebenchmark).time / 1e9
-        nativerate = round(length(records) / nativetime)
-        nativeallocsperrecord = nativebenchmark.allocs / length(records)
-
-        if rusthandle === nothing
-            @info "Model2Vec head-to-head (Rust bridge removed; native only)" records = length(records) nativerate = nativerate nativeallocsperrecord = nativeallocsperrecord
-            @test nativeallocsperrecord <= 20 # ~3.25 measured (StringView wrapper + ~4.8% invalid-UTF-8 sanitized-copy fallback; encode itself is 0-alloc)
-            @test nativerate >= 400
-        else
-            # Zero-copy, matching what `distance(::Embedding, ::WET)` used before this refactor —
-            # generous to Rust (no content() allocation on this side of the comparison).
-            rustscores1, rustpointers, rustlengths = Float64[0.0], UInt[0], UInt[0]
-            function rustdistance(wet::WET{U,C,L}) where {U,C,L}
-                reference = Ref(wet)
-                GC.@preserve reference rustpointers rustlengths rustscores1 begin
-                    ptr = Base.unsafe_convert(Ptr{WET{U,C,L}}, reference) + MonsieurPapin.contentoffset(WET{U,C,L})
-                    rustpointers[1] = UInt(ptr)
-                    rustlengths[1] = MonsieurPapin.utf8boundary(Ptr{UInt8}(ptr), wet.content.length)
-                    MonsieurPapin.RustWorker.score!(rustscores1, rustpointers, rustlengths, rusthandle)
-                end
-                first(rustscores1)
-            end
-            rustbenchmark = @benchmark sum($rustdistance, $records) samples=1 evals=1 seconds=30
-            display(rustbenchmark)
-            rusttime = median(rustbenchmark).time / 1e9
-            rustrate = round(length(records) / rusttime)
-
-            # Sanity check: the two backends should be scoring the same underlying relevance
-            # signal, not literally the same encoder -- correlated, not identical, distances.
-            nativescores = [distance(native, wet) for wet in records]
-            rustscores = [rustdistance(wet) for wet in records]
-            correlation = cor(nativescores, rustscores)
-
-            speedup = round(rusttime / nativetime; digits=2)
-            @info "Model2Vec head-to-head" records = length(records) nativerate = nativerate rustrate = rustrate speedup = speedup correlation = correlation nativeallocsperrecord = nativeallocsperrecord rustallocs = rustbenchmark.allocs
-            @test correlation >= 0.9
-            @test nativetime <= rusttime
-        end
-    end
-
     @testset "select embedding filtering (channel-based, batch-parallel)" begin
         source = embedding("cat dog"; vecpath=model_source)
-        benchmark = @benchmark sum(_ -> 1, select($source, wets($wetspath); capacity=1_000)) samples=1 seconds=5
+        benchmark = @benchmark sum(_ -> 1, select($source, wets($wetspath); capacity=1_000, threshold=0.0)) samples=1 seconds=5
         time = median(benchmark).time / 1e9
         display(benchmark)
         records = count(wets(wetspath))
@@ -303,8 +186,7 @@ end
         @info "Benchmarking select embedding (records)" records records_per_second allocations = benchmark.allocs
         @test records_per_second >= 400
         # ~3.25/record from the WET wrapper (StringView + ~4.8% invalid-UTF-8 sanitized-copy
-        # fallback -- see the Model2Vec head-to-head test above; encode itself is 0-alloc), plus
-        # per-batch queue/task bookkeeping in select/embed!.
+        # fallback; encode itself is 0-alloc), plus per-batch queue/task bookkeeping in select/embed!.
         @test benchmark.allocs <= 20 * records
     end
 
@@ -341,7 +223,7 @@ end
         port = hasproperty(server.listener, :server) ? last(Sockets.getsockname(server.listener.server)) : HTTP.port(server)
         baseurl = "http://127.0.0.1:$(port)"
         settings = Dict(
-            "llm" => Dict("baseurl" => baseurl, "path" => "/v1/chat/completions", "model" => "qwen/qwen3.6-27b", "password" => "", "timeout" => 120),
+            "llm" => Dict("baseurl" => baseurl, "path" => "/v1/chat/completions", "model" => "qwen/qwen3.6-27b", "password" => "", "timeout" => 120, "thinking" => false),
         )
         page = "Relative strength index is a momentum trading indicator used to spot overbought and oversold conditions."
         try
@@ -356,6 +238,7 @@ end
                 path=settings["llm"]["path"],
                 password=settings["llm"]["password"],
                 timeout=settings["llm"]["timeout"],
+                thinking=settings["llm"]["thinking"],
             )
             benchmark = @benchmark request(;
                 model=$settings["llm"]["model"],
@@ -365,6 +248,7 @@ end
                 path=$settings["llm"]["path"],
                 password=$settings["llm"]["password"],
                 timeout=$settings["llm"]["timeout"],
+                thinking=$settings["llm"]["thinking"],
             ) samples=100 seconds=5
             time = median(benchmark).time / 1e9 * 1_000  # ms
             display(benchmark)

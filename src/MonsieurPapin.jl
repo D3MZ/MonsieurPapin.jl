@@ -1,20 +1,17 @@
 module MonsieurPapin
 
-using HTTP, CodecZlib, BufferedStreams, Dates, JSON, StringViews, TOML
-using DataStructures: BinaryHeap
-import DataStructures: heapify!
+using HTTP, CodecZlib, BufferedStreams, Dates, JSON, StringViews
 using HTTP: URI
 export URI
 export WET, BoundedPriorityQueue, SeenSet, AC, Embedding
 export wets, wetpaths, research, select, extract
 export embedding, distance, similarity, isrelevant, score, simhash
-export LLMBackend, OpenAIEndpoint, PiRPC, CodexAppServer, UsageMonitor, NoUsage, llm, usage, request, message, extractkeywords, summarize
+export LLMBackend, OpenAIEndpoint, PiRPC, CodexAppServer, UsageMonitor, NoUsage, llm, usage, request, message, extractkeywords
 export fetchtext, plaintext, language, languages, prompt
 
 
 include("wetpaths.jl")
 include("wets.jl")
-include("RustWorker.jl")
 include("ahocorasick.jl")
 include("scoring.jl")
 include("http.jl")

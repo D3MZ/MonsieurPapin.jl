@@ -45,7 +45,7 @@ end
     @test boundary(UInt8[0xE2, 0x82]) == 0
     @test boundary(UInt8[0xC3, 0xA9]) == 2
 
-    # The content pointer Rust slices must land on the real content bytes (struct-layout guard).
+    # The content pointer must land on the real content bytes (struct-layout guard).
     text = "héllo wörld"
     page = WET(MonsieurPapin.Snippet("u", Val(8)), MonsieurPapin.Snippet(text, Val(64)),
         MonsieurPapin.Snippet("eng", Val(8)), DateTime(2026, 1, 1), ncodeunits(text), 0.0)
@@ -81,8 +81,8 @@ end
             )
             @test isfinite(distance(source, bad))
             scratch = source.scratch
-            scores = Float64[]; pointers = UInt[]; lengths = UInt[]
-            MonsieurPapin.score!(scores, pointers, lengths, source, [bad], scratch)
+            scores = Float64[]
+            MonsieurPapin.score!(scores, source, [bad], scratch)
             @test isfinite(first(scores))
 
             if get(ENV, "MONSIEURPAPIN_BENCHMARK", "false") == "true"

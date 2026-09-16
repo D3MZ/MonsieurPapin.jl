@@ -8,7 +8,7 @@ using TOML
 one(_) = 1
 
 # Zero-allocation assertions run first, before other tests load packages
-# (HTTP, JlrsCore, etc.) that add noise to Julia's task allocation tracking.
+# (HTTP and other packages) that add noise to Julia's task allocation tracking.
 let path = joinpath(dirname(@__DIR__), "data", "warc.wet.gz")
     @testset "zero-alloc" begin
         warmed = wets(path)

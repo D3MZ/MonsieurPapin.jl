@@ -80,7 +80,6 @@ function select(matcher::AC, source; capacity, minmatches=1, monitor=nothing)
             end
         finally
             close(shortlist)
-            close(matcher)
         end
     end
     shortlist
@@ -95,7 +94,7 @@ nearest the query, spreading batches across all threads.
 function select(query::Embedding, source; capacity, threshold, batchsize=64, workers=max(1, Threads.nthreads() ÷ 2), monitor=nothing)
     shortlist = BoundedPriorityQueue{eltype(source)}(capacity)  # Forward: lower distance is better
     Threads.@spawn begin
-        # Embedding is CPU-bound (Rust matmul) but only feeds the bounded shortlist that drains
+        # Embedding is CPU-bound but only feeds the bounded shortlist that drains
         # into the much slower LLM, so it needs only a few workers. Spawning one per thread starves
         # the network-bound parse/decompress stages of cores and throttles ingest below line rate.
         tasks = map(_ -> Threads.@spawn(embed!(shortlist, query, source, batchsize, threshold, monitor)), 1:workers)
@@ -108,8 +107,8 @@ end
 function embed!(shortlist::BoundedPriorityQueue{T}, query::Embedding, source, batchsize, threshold, monitor) where {T}
     handle!(query) # load query.model once before spawning; each worker gets its own scratch below
     scratch = _M2V.Scratch(query.model) # one per worker task -- see score!'s explicit-scratch note
-    batch, scores, pointers, lengths = T[], Float64[], UInt[], UInt[]
-    flush!() = (score!(scores, pointers, lengths, query, batch, scratch);
+    batch, scores = T[], Float64[]
+    flush!() = (score!(scores, query, batch, scratch);
                 foreach(i -> isrelevant(scores[i]; threshold) && pipelineactive(monitor) && isopen(shortlist) && put!(shortlist, rescore(batch[i], scores[i])), eachindex(batch));
                 empty!(batch))
     for wet in source
@@ -196,8 +195,6 @@ function wetstream(crawl::AbstractDict, pipelineconfig::AbstractDict; monitor=no
         wets(path, crawl["retry"]; capacity, wetroot=root, languages, monitor)
 end
 
-pipeline(source, seen, ::Nothing, query, capacity; minmatches, threshold, monitor, dedupe_batchsize) =
-    select(query, unique(seen, source; batchsize=dedupe_batchsize, monitor); capacity, threshold, monitor)
 pipeline(source, seen, matcher::AC, query, capacity; minmatches, threshold, monitor, dedupe_batchsize) =
     select(query, unique(seen, select(matcher, source; capacity, minmatches, monitor); batchsize=dedupe_batchsize, monitor); capacity, threshold, monitor)
 
@@ -326,7 +323,7 @@ function research(crawl::AbstractDict, pipelineconfig::AbstractDict, embeddingco
                     best = pipeline(source, seen, AC(weights(article)), query, capacity;
                                     minmatches=pipelineconfig["min_keywords"], threshold=pipelineconfig["threshold"],
                                     monitor=usage_monitor, dedupe_batchsize=pipelineconfig["dedupe_batchsize"])
-                    extract(best, client, output, prompts["local_system"], prompts["local_input"], wet -> prompt(wet, Val(:local));
+                    extract(best, client, output, prompts["system"], prompts["input"], wet -> prompt(wet, Val(:local));
                             mode="w", workers=llmconfig["parallel"], monitor=usage_monitor)
                     @info "Local research complete." outputpath=output["path"]
                 finally

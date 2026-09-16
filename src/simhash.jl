@@ -1,5 +1,4 @@
 using DataStructures: CircularBuffer
-using StringViews
 
 """
     simhash(bytes::AbstractVector{UInt8})::UInt64

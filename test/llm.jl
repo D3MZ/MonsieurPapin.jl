@@ -27,7 +27,7 @@ testsettings(baseurl; languages=["eng"], outputpath="research.md", embeddingmode
     "embedding" => Dict("model" => embeddingmodel),
     "llm" => Dict("provider" => "local", "baseurl" => baseurl, "path" => "/v1/chat/completions", "model" => "qwen/qwen3.6-27b", "password" => "", "timeout" => 120, "thinking" => false, "keyword_input_limit" => 2000, "parallel" => 1),
     "output" => Dict("path" => outputpath),
-    "prompts" => Dict("system" => "", "input" => "", "local_system" => "", "local_input" => "", "keywords_system" => "Extract keywords from this text.", "summary_system" => "Summarize this text."),
+    "prompts" => Dict("system" => "", "input" => "", "keywords_system" => "Extract keywords from this text."),
 )
 
 mutable struct BootstrapMonitor
@@ -151,21 +151,6 @@ end
         close(translated.server)
     end
 
-    unservice = llmserver(; seed="seed article") do payload
-        Dict("choices" => [Dict("message" => Dict("content" => "a short summary"))])
-    end
-
-    try
-        settings = testsettings(unservice.baseurl; languages=["eng"])
-        client = llm(settings["llm"])
-        result = MonsieurPapin.summarize(client, settings["prompts"], "seed article"; limit=140)
-        @test result == "a short summary"
-        req = take!(unservice.requests)
-        @test occursin("Summarize in at most 140 characters", req["messages"][2]["content"])
-        @test !isready(unservice.requests)
-    finally
-        close(unservice.server)
-    end
 
     emptyservice = llmserver(; seed="<html><body>Relative strength index momentum oscillator trading indicator overbought oversold</body></html>") do payload
         Dict("choices" => [Dict("message" => Dict("content" => ""))])
@@ -286,7 +271,7 @@ end
         "timeout" => 10,
         "method" => "account/rateLimits/read",
         "params" => Dict(),
-        "limit_name" => "test-model",
+        "limit_name" => "test-limit",
     )
     server = CodexAppServer(usagesettings)
     snapshot = usage(server, usagesettings)

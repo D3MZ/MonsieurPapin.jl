@@ -1,10 +1,5 @@
-# Embedding scoring, backed by the native-Julia Model2Vec.jl package
-# (https://github.com/D3MZ/Model2Vec.jl). This replaces the former Rust FFI path (RustWorker.jl
-# -> deps/model2vec_rs_worker): it is faster and (for WordPiece models) allocation-free — see
-# test/benchmarks.jl's "Model2Vec head-to-head" test, which is what justified the switch and now
-# guards against regression. The Rust worker binary itself is left in place (used only by that
-# test's direct comparison, not by production code), mirroring how src/ahocorasick.jl already
-# stopped calling into Rust while the shared worker stuck around for the AC head-to-head test.
+# Embedding scoring, backed by the native-Julia Model2Vec.jl package.
+# Model loading stays lazy and WET content is scored directly from its inline buffer.
 import Model2Vec
 const _M2V = Model2Vec
 
@@ -153,11 +148,9 @@ score(entry::AC, wet::WET{U,C,L}) where {U,C,L} = score(entry, wet, Ref{WET{U,C,
 # core.jl, which spawns several worker tasks against one shared `Embedding`) must each pass their
 # own scratch, or they'll race on the same buffer. `handle!(source)` still loads `source.model`
 # once (read-only after that, safe to share).
-function score!(scores, pointers, lengths, source::Embedding, batch::AbstractVector{T}, scratch) where {T<:WET}
+function score!(scores, source::Embedding, batch::AbstractVector{T}, scratch) where {T<:WET}
     handle!(source)
     resize!(scores, length(batch))
-    resize!(pointers, length(batch)) # unused by the native path; kept so callers don't need to change
-    resize!(lengths, length(batch))
 
     GC.@preserve batch begin
         @inbounds for i in eachindex(batch, scores)
@@ -181,5 +174,5 @@ end
 
 # Convenience overload for single-threaded callers: uses `source`'s own scratch (safe as long as
 # `source` isn't shared across concurrent tasks — see the explicit-scratch method above).
-score!(scores, pointers, lengths, source::Embedding, batch::AbstractVector{<:WET}) =
-    (handle!(source); score!(scores, pointers, lengths, source, batch, source.scratch))
+score!(scores, source::Embedding, batch::AbstractVector{<:WET}) =
+    (handle!(source); score!(scores, source, batch, source.scratch))

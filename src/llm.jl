@@ -100,7 +100,7 @@ end
 
 function usagewindows(snapshot, limitname::String)
     limits = snapshot["rateLimitsByLimitId"]
-    limit = first(filter(entry -> entry[2]["limitName"] == limitname, limits))[2]
+    limit = first(filter(entry -> entry[1] == limitname || entry[2]["limitName"] == limitname, limits))[2]
     windows = (("primary", limit["primary"]), ("secondary", limit["secondary"]))
     filter(window -> window[2] !== nothing, windows)
 end
@@ -207,8 +207,7 @@ end
 
 function request(; model::String, systemprompt::String, input::String,
                   baseurl::String, path::String, password::String,
-                  timeout::Int, responseformat=nothing, maxtokens=nothing, temperature=nothing,
-                  thinking::Bool)
+                  timeout::Int, thinking::Bool)
     body = Dict(
         "model" => model,
         "messages" => [
@@ -216,9 +215,6 @@ function request(; model::String, systemprompt::String, input::String,
             Dict("role" => "user", "content" => input),
         ],
     )
-    isnothing(responseformat) || (body["response_format"] = responseformat)
-    isnothing(maxtokens) || (body["max_tokens"] = maxtokens)
-    isnothing(temperature) || (body["temperature"] = temperature)
     thinking || (body["chat_template_kwargs"] = Dict("enable_thinking" => false); body["enable_thinking"] = false)
     headers = ["Content-Type" => "application/json", "Authorization" => "Bearer $(password)"]
     response = HTTP.post(string(baseurl, path); headers=headers, body=JSON.json(body), readtimeout=timeout, retry=false)
@@ -316,9 +312,4 @@ function extractkeywords(client::LLMBackend, prompts::AbstractDict, text;
     response = request(client, prompts["keywords_system"], string("Target languages: ", languages, "\n\nText:\n", first(text, limitinput)))
     record!(monitor, response)
     JSON.parse(message(response))["keywords"]
-end
-
-function summarize(client::LLMBackend, prompts::AbstractDict, text; limit)
-    response = request(client, prompts["summary_system"], string("Summarize in at most ", limit, " characters:\n\n", text))
-    message(response)
 end
